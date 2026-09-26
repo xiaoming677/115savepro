@@ -183,18 +183,67 @@ docker compose pull && docker compose up -d
 
 | 方式 | 操作 |
 |---|---|
-| **看页面** | 打开面板，**左下角**会显示当前版本号（如 `v1.1.1`） |
-| **看接口** | 浏览器访问 `http://你的IP:5000/api/version`，返回 `{"version":"1.1.1", ...}` |
+| **看页面** | 打开面板，**左下角**会显示当前版本号（如 `v1.2.0`） |
+| **看接口** | 浏览器访问 `http://你的IP:5000/api/version`，返回 `{"version":"1.2.0", ...}` |
 | **看容器** | `docker inspect 115savepro --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'` |
 
 #### 常见问题
 
-**`docker compose pull` 提示 `up to date`，但版本没变？**
+#### 更新后版本没变？按这个顺序排查
 
-先跑 `docker compose up -d --force-recreate` 强制重建容器。
-如果还不行，说明拉到的确实就是最新版，去 [Releases](https://github.com/xiaoming677/115savepro/releases) 看最新版本号对不对。
+**第 1 步：确认容器当前到底跑的是哪个版本**
 
-**为什么 `docker compose up -d` 说容器没重建？**
+```bash
+# 容器镜像里带的版本标签（最准，不依赖页面显示）
+docker inspect 115savepro --format '镜像={{.Config.Image}}  版本={{index .Config.Labels "org.opencontainers.image.version"}}'
+
+# 本地已有哪些相关镜像
+docker images | grep -i 115savepro
+
+# 程序自报的版本
+curl -s http://127.0.0.1:5000/api/version; echo
+```
+
+**第 2 步：按结果对症处理**
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 本地镜像有新的，但**容器标签还是旧的** | 镜像拉到了，容器没重建 | `docker compose up -d --force-recreate` |
+| 本地镜像**也是旧的**，`pull` 说 `up to date` | 镜像源连不上，或返回了缓存的旧摘要 | 见下面「拉不动镜像」 |
+| 容器标签里**没有** `version` 这一项 | 你跑的是自己 `docker build` 出来的镜像 | 见下面「本地构建的镜像」 |
+
+**拉不动镜像**
+
+`ghcr.io` 在国内经常连不上，典型表现是 `docker compose pull` 卡住、超时，或者静默告诉你 `up to date` 但其实没拉到新版本。先**直接测试哪个源通**：
+
+```bash
+docker pull xiaoming677/115savepro:latest          # Docker Hub
+docker pull ghcr.io/xiaoming677/115savepro:latest   # GHCR
+```
+
+**哪条成功就用哪个。** 比如只有 Docker Hub 能拉，就把 `docker-compose.yml` 里那行改成：
+
+```yaml
+image: xiaoming677/115savepro:latest
+```
+
+然后：
+
+```bash
+docker compose pull && docker compose up -d --force-recreate
+```
+
+两个都拉不动，就是 NAS 的 DNS / 网络问题：给 Docker 配国内镜像加速器，或检查这台机器上的代理（Clash 之类的分流规则有时会把 registry 也拦掉）。
+
+**本地构建的镜像**
+
+如果你改过 `docker-compose.yml`，把 `image:` 指向了本地名字（如 `115savepro:latest`），那 `pull` 对你**完全没用** —— 它不会去远端找。要么改用已发布的镜像地址（推荐，以后更新只需一条命令），要么每次自己重新构建：
+
+```bash
+docker compose up -d --build
+```
+
+**`docker compose up -d` 说容器没重建？**
 
 compose 只在**镜像摘要变化**时才重建。如果镜像确实更新了但仍没重建，用 `--force-recreate`。
 

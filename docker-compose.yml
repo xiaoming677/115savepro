@@ -1,15 +1,16 @@
 # 115SavePro 部署文件
 #
-# 直接启动（镜像已发布在 GHCR，匿名可拉取，无需登录）：
+# 直接启动（镜像已发布到两个仓库，均可匿名拉取）：
 #   docker compose up -d
 #
 # 更新到最新版：
-#   docker compose pull && docker compose up -d
+#   docker compose pull && docker compose up -d --force-recreate
 #
-# 想改用 Docker Hub 镜像的话，把 image 换成（国内拉取通常更快）：
-#   image: xiaoming677/115savepro:latest
-# 或用带版本号的：
-#   image: xiaoming677/115savepro:1.0.0
+# ⚠️ 国内网络请优先用 Docker Hub 镜像（ghcr.io 经常连不上）：
+#   把下面的 image 换成
+#     image: xiaoming677/115savepro:latest
+#   原因：ghcr.io 在国内常见超时/静默返回旧摘要，表现为「更新了但版本没变」。
+#   版本号可用 latest，也可锁定具体版本如 1.2.0。
 #
 # 想本地构建（改代码后自己编译）：
 #   打开下面的 build: . 并注释掉 image 行，然后 docker compose up -d --build
