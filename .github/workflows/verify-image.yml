@@ -1,0 +1,70 @@
+name: Verify Published Image
+
+# 用 CI 机器去查镜像仓库的实际情况（本地网络可能连不上 Docker Hub）。
+# 用途：发版后确认镜像真的推上去了、以及仓库是公开还是私有。
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Docker Hub 镜像名（不含 registry 前缀）'
+        required: true
+        default: 'xiaoming677/115savepro'
+      tag:
+        description: '要验证的 tag'
+        required: true
+        default: 'latest'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 查询 Docker Hub 仓库信息
+        env:
+          IMG: ${{ github.event.inputs.image }}
+        run: |
+          set +e
+          CODE=$(curl -s -o /tmp/repo.json -w '%{http_code}' "https://hub.docker.com/v2/repositories/${IMG}/")
+          echo "匿名查询 https://hub.docker.com/v2/repositories/${IMG}/"
+          echo "HTTP 状态码：${CODE}"
+          if [ "$CODE" = "200" ]; then
+            python3 -c "import json;d=json.load(open('/tmp/repo.json'));print('仓库     :',d.get('namespace')+'/'+d.get('name'));print('可见性   :','PRIVATE（私有）' if d.get('is_private') else 'PUBLIC（公开）');print('拉取次数 :',d.get('pull_count'));print('最后更新 :',d.get('last_updated'))"
+          else
+            echo "::warning::匿名查询返回 ${CODE} —— 仓库不存在，或为私有（私有仓库匿名查询会 404）"
+          fi
+
+      - name: 列出该仓库的 tag
+        env:
+          IMG: ${{ github.event.inputs.image }}
+        run: |
+          set +e
+          curl -s "https://hub.docker.com/v2/repositories/${IMG}/tags/?page_size=100" -o /tmp/tags.json
+          python3 -c "import json;d=json.load(open('/tmp/tags.json'));n=[t['name'] for t in d.get('results',[])];print('tags:',n if n else '（无 / 匿名不可见）')" 2>/dev/null || echo "匿名拿不到 tag 列表（私有仓库的正常表现）"
+
+      - name: 匿名拉取 manifest（判断能否公开拉取）
+        env:
+          IMG: ${{ github.event.inputs.image }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set +e
+          # 本步骤没有登录动作，所以是纯匿名访问
+          docker logout >/dev/null 2>&1
+          if docker manifest inspect "${IMG}:${TAG}" > /tmp/manifest.json 2>/tmp/err.txt; then
+            echo "OK 匿名可以拉取 ${IMG}:${TAG} —— 镜像存在且为公开"
+            python3 -c "import json;d=json.load(open('/tmp/manifest.json'));print('平台:',[m.get('platform',{}).get('architecture') for m in d.get('manifests',[])])" || true
+          else
+            echo "FAIL 匿名拉取失败，错误信息："
+            head -5 /tmp/err.txt
+            echo "（unauthorized/denied -> 仓库是私有的；not found -> 该 tag 不存在）"
+          fi
+
+      - name: 写入摘要
+        env:
+          IMG: ${{ github.event.inputs.image }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          {
+            echo "### 镜像验证：${IMG}:${TAG}"
+            echo ""
+            echo "在 GitHub Actions 机器上（可正常访问 Docker Hub）做的**匿名**检查。"
+            echo "如果这里显示匿名可见、但你在网页上找不到，多半是当前登录的不是推送时用的那个 Docker Hub 账号。"
+          } >> "$GITHUB_STEP_SUMMARY"
