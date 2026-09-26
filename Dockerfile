@@ -7,6 +7,19 @@ ENV PYTHONUNBUFFERED=1 \
     PORT=5000 \
     HOST=0.0.0.0
 
+# 构建元信息：docker inspect 可以看到，/api/version 也会返回
+ARG BUILD_DATE=""
+ARG VCS_REF=""
+ENV BUILD_DATE=$BUILD_DATE \
+    VCS_REF=$VCS_REF
+
+LABEL org.opencontainers.image.title="115SavePro" \
+      org.opencontainers.image.description="115 网盘自动转存 / 离线下载 / QMediaSync 联动" \
+      org.opencontainers.image.source="https://github.com/xiaoming677/115savepro" \
+      org.opencontainers.image.licenses="AGPL-3.0" \
+      org.opencontainers.image.revision=$VCS_REF \
+      org.opencontainers.image.created=$BUILD_DATE
+
 WORKDIR /app
 
 # 时区与编译依赖（p115client 的部分依赖需要编译）

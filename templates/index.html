@@ -177,6 +177,7 @@ code{background:var(--panel-2);border:1px solid var(--line-2);padding:1px 6px;bo
     </nav>
     <div class="side-foot">
       <div id="foot-user">—</div>
+      <div id="foot-version" class="muted" style="margin-top:4px">v—</div>
       <div style="margin-top:6px"><a onclick="doLogout()" style="cursor:pointer">退出登录</a></div>
     </div>
   </aside>
@@ -1113,7 +1114,15 @@ async function changePwd(){
 /* ============================================================
    启动
    ============================================================ */
+let APP_VERSION = '';
 (async function init(){
+  // 版本号（不需要登录，更新镜像后用它核对是否生效）
+  api('/api/version').then(r => {
+    APP_VERSION = (r.data || {}).version || '';
+    const el = $('#foot-version');
+    if (el) el.textContent = 'v' + APP_VERSION;
+  }).catch(()=>{});
+
   try{
     const r = await api('/api/auth/check');
     if (r.data && r.data.logged_in){ showApp(); $('#foot-user').textContent = 'admin'; switchView('dashboard'); }

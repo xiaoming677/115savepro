@@ -105,6 +105,10 @@ jobs:
             type=ref,event=branch
             type=sha,prefix=sha-,format=short
 
+      - name: 记录构建时间
+        id: bt
+        run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
       - name: 构建并推送
         uses: docker/build-push-action@v6
         with:
@@ -116,6 +120,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ steps.bt.outputs.date }}
+            VCS_REF=${{ github.sha }}
 
       - name: 输出摘要
         run: |

@@ -169,11 +169,66 @@ python web_app.py          # 默认 0.0.0.0:5000，可用 PORT / HOST 环境变�
 
 ### 更新到最新版
 
+在 `docker-compose.yml` 所在目录执行：
+
 ```bash
 docker compose pull && docker compose up -d
 ```
 
-**以后更新就重复这一条命令**。数据都在挂载卷里，升级镜像不会丢数据。
+**以后更新就重复这一条命令。** 就这样，不用改任何配置。
+
+#### 怎么确认更新生效了
+
+三种方式，任选其一：
+
+| 方式 | 操作 |
+|---|---|
+| **看页面** | 打开面板，**左下角**会显示当前版本号（如 `v1.1.1`） |
+| **看接口** | 浏览器访问 `http://你的IP:5000/api/version`，返回 `{"version":"1.1.1", ...}` |
+| **看容器** | `docker inspect 115savepro --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'` |
+
+#### 常见问题
+
+**`docker compose pull` 提示 `up to date`，但版本没变？**
+
+先跑 `docker compose up -d --force-recreate` 强制重建容器。
+如果还不行，说明拉到的确实就是最新版，去 [Releases](https://github.com/xiaoming677/115savepro/releases) 看最新版本号对不对。
+
+**为什么 `docker compose up -d` 说容器没重建？**
+
+compose 只在**镜像摘要变化**时才重建。如果镜像确实更新了但仍没重建，用 `--force-recreate`。
+
+**我是用 `docker build` 自己构建的镜像，怎么办？**
+
+那 `pull` 对你没用，要重新构建：
+
+```bash
+docker compose up -d --build        # compose 项目里带 build: . 时
+# 或
+docker build -t 115savepro:latest . && docker compose up -d --force-recreate
+```
+
+建议直接改用已发布的镜像（把 `image:` 指向 `ghcr.io/...` 或 `xiaoming677/...`），
+这样以后更新只要 `pull` 一条命令。
+
+**数据会不会丢？**
+
+不会。账号 Cookie、转存任务、历史、QMS 绑定全部在 `./config` 挂载卷里，
+升级镜像只换程序不碰数据。稳妥起见可以先备份：
+
+```bash
+tar czf 115savepro-config-$(date +%Y%m%d).tar.gz config/
+```
+
+**旧镜像占空间怎么办？**
+
+```bash
+docker image prune -f            # 清理悬空镜像（安全）
+# 想更彻底地清掉未被使用的镜像：
+docker image prune -a -f
+```
+
+> `-a` 会删掉所有没有被容器使用的镜像，执行前确认没有别的镜像在用。
 
 ### 飞牛 NAS 上要注意的
 
@@ -467,6 +522,14 @@ git push origin v1.1.0
 ---
 
 ## 更新日志
+
+### v1.1.1
+
+- 新增**版本号显示**：面板左下角显示当前版本，`GET /api/version` 也可查，
+  `docker inspect` 能看到构建时间和 commit —— 更新后一眼确认有没有生效
+- 镜像补充 OCI 标准 LABEL（版本、源码地址、构建时间、commit）
+- README 补充「更新到最新版」完整说明：如何确认更新生效、常见问题、
+  数据备份、清理旧镜像
 
 ### v1.1.0
 

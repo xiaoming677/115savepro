@@ -30,6 +30,9 @@ CONFIG_DIR = os.path.join(BASE_DIR, 'config')
 LOG_DIR = os.path.join(BASE_DIR, 'log')
 SECRET_FILE = os.path.join(CONFIG_DIR, 'secret.key')
 
+# 版本号：更新镜像后可在页面左下角 / GET /api/version 核对
+APP_VERSION = '1.1.1'
+
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'static'), static_url_path='/static')
 app.config['JSON_AS_ASCII'] = False
 
@@ -108,6 +111,16 @@ def _auth_cfg():
 def _on_error(e):
     logger.exception('未处理异常')
     return fail('服务器内部错误：%s' % e, 500)
+
+
+@app.route('/api/version', methods=['GET'])
+def api_version():
+    """版本信息（不需要登录，便于更新后核对 / 健康检查）"""
+    return ok({
+        'version': APP_VERSION,
+        'build_date': os.environ.get('BUILD_DATE', ''),
+        'vcs_ref': os.environ.get('VCS_REF', ''),
+    })
 
 
 # --------------------------------------------------------------------------
@@ -918,7 +931,8 @@ def favicon():
 def main():
     port = int(os.environ.get('PORT') or 5000)
     host = os.environ.get('HOST') or '0.0.0.0'
-    logger.info('115SavePro 启动中…  http://%s:%s' % ('127.0.0.1' if host == '0.0.0.0' else host, port))
+    logger.info('115SavePro v%s 启动中…  http://%s:%s'
+                % (APP_VERSION, '127.0.0.1' if host == '0.0.0.0' else host, port))
     try:
         scheduler.start()
     except Exception as e:  # noqa: BLE001
