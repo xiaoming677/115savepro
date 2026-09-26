@@ -34,26 +34,33 @@ TEMPLATE_PATH = os.path.join(CONFIG_DIR, 'config.template.json')
 
 # 允许绑定 cookie 的设备（扫码后即以此设备身份登录）
 #
-# 顺序 = 推荐尝试顺序，第一个是默认值。
-# 为什么默认用 web：这是 115 官方网页版登录所用的命名空间，而我们的场景
-# 恰好就是"电脑屏幕上显示二维码 → 用 115 App 扫码确认"，语义完全一致。
-# 支付宝/微信小程序端的命名空间（alipaymini/wechatmini）签发的小程序二维码，
-# 用 115 主 App 扫会出现"能扫出声音但确认失败/参数错误"的情况。
+# 顺序 = 界面下拉框的展示顺序，第一个是默认值。
+#
+# 为什么默认改成 alipaymini（而不是上一版的 web）：
+#   参考 xiaoya-alist 修复 115 扫码的 commit（a25334b），115 的扫码设备
+#   清单里是 windows/mac/linux/wechatmini/alipaymini 这类，**web 不在清单内**；
+#   且 p115client 文档明确警告 app="web" 最容易触发「IP登录异常」，
+#   该风控要到次日零点才解禁。所以把 web 降到最末，默认用 alipaymini。
 AVAILABLE_APPS = [
-    ('web', '115生活_网页端（推荐，与官网登录一致）'),
+    ('alipaymini', '115生活_支付宝小程序（推荐）'),
+    ('wechatmini', '115生活_微信小程序'),
     ('android', '115生活_安卓端'),
     ('115android', '115_安卓端'),
     ('ios', '115生活_苹果端'),
     ('ipad', '115生活_苹果平板端'),
-    ('tv', '115生活_安卓电视端'),
-    ('alipaymini', '115生活_支付宝小程序'),
-    ('wechatmini', '115生活_微信小程序端'),
-    ('qandroid', '115管理_安卓端'),
     ('os_windows', '115生活_Windows端'),
     ('os_linux', '115生活_Linux端'),
     ('harmony', '115_鸿蒙端'),
+    ('tv', '115生活_安卓电视端'),
+    ('qandroid', '115管理_安卓端'),
+    ('web', '115生活_网页端（易触发风控，不推荐）'),
 ]
-DEFAULT_APP = 'web'
+DEFAULT_APP = 'alipaymini'
+
+# 扫码确认后，自动依次用这些设备身份尝试换取 Cookie，第一个成功即采用。
+# 用户不必再反复换设备重扫 —— 一次扫码就把候选设备都覆盖掉。
+FALLBACK_APPS = ['alipaymini', 'wechatmini', 'android', '115android',
+                 'ios', 'ipad', 'os_windows', 'web']
 
 
 class StorageError(Exception):
@@ -75,7 +82,13 @@ class QrSession:
         self.done = False
         self.error = ''
         self.debug = []          # 诊断日志：每一步的原始响应（排查「参数错误」用）
-        self._last_status_raw = None
+        # 用哨兵值而非 None：等待扫码时 115 返回 data={}，raw_status 也是 None，
+        # 与初值相同会导致第 3 步**完全不写诊断日志** —— 这正是用户反馈
+        # 「诊断里只有 2 条记录、看不到错误」的原因。
+        self._last_status_raw = '__init__'
+        self.tried_apps = []     # 第 4 步换取凭据时试过的设备及结果
+        self.app_used = ''       # 最终成功换取凭据所用的设备
+        self.retry_count = 0     # 「还没确认」导致的退回重试次数（防死循环）
 
     def dbg(self, step, detail):
         if len(self.debug) < 80:
@@ -141,6 +154,44 @@ def qr_new_session(app=DEFAULT_APP):
     return sid, sess
 
 
+def _obtain_cookie(sess):
+    """依次用多个设备身份换取 Cookie，返回 (cookie, 尝试明细列表)
+
+    为什么要多试：115 对不同设备命名空间的接受度不一样，同一个二维码
+    用某个设备换取可能报「参数错误」，换一个就成功。与其让用户反复
+    换设备重扫，不如一次扫码把候选设备都试一遍，并留下完整明细。
+
+    提前退出的情况：返回「老乡验证失败」/「IP登录异常」说明其实还没确认
+    或已被风控，继续试别的设备没有意义，直接停手以节省请求。
+    """
+    order = [sess.app] + [a for a in FALLBACK_APPS if a != sess.app]
+    tried = []
+    for app in order:
+        try:
+            result = P115Client.login_qrcode_scan_result(sess.uid, app=app)
+        except Exception as e:  # noqa: BLE001
+            tried.append({'app': app, 'ok': False,
+                          'detail': '%s: %s' % (type(e).__name__, str(e)[:120])})
+            continue
+
+        data = (result or {}).get('data') or {}
+        cookie = data.get('cookie') or ''
+        if cookie:
+            tried.append({'app': app, 'ok': True,
+                          'detail': '成功（cookie %d 字符）' % len(cookie)})
+            sess.dbg('4.换取凭据：成功（app=%s，共试 %d 个）' % (app, len(tried)),
+                     {'明细': tried})
+            return cookie, tried
+
+        detail = _tok_msg(result)
+        tried.append({'app': app, 'ok': False, 'detail': detail})
+        if any(k in detail for k in ('老乡', 'IP登录异常', 'IP 登录异常')):
+            break
+
+    sess.dbg('4.换取凭据：全部失败（起始 app=%s）' % sess.app, {'明细': tried})
+    return '', tried
+
+
 def qr_poll(sid):
     """轮询扫码状态。返回 QrSession（含 cookies / error / message / debug）"""
     with _qr_lock:
@@ -172,9 +223,12 @@ def qr_poll(sid):
     except (TypeError, ValueError):
         status = 0
 
-    # 只在状态变化或出错时记日志，避免刷屏
-    if raw_status != sess._last_status_raw:
-        sess.dbg('3.查状态', resp)
+    # 状态变化时记一次；**接口报错时也必须记** —— 否则错误会被"等待扫码"吞掉，
+    # 用户看到的诊断里就只有取 token / 取二维码两条，无从排查。
+    api_err = isinstance(resp, dict) and resp.get('state') != 1
+    if raw_status != sess._last_status_raw or api_err:
+        sess.dbg('3.查状态(app=%s, uid=%s…)' % (sess.app, (sess.uid or '')[:8]),
+                 {'解析出的 status': raw_status, '原始响应': resp})
         sess._last_status_raw = raw_status
 
     # 接口层面报错（state != 1）时**必须让用户看见**，不能默默当"还在等待"
@@ -191,32 +245,35 @@ def qr_poll(sid):
     elif status == 2:
         sess.message = '已确认，正在获取登录凭据…'
 
-        # ---- 第 4 步：换取 cookie ----
-        try:
-            result = P115Client.login_qrcode_scan_result(sess.uid, app=sess.app)
-        except Exception as e:  # noqa: BLE001
-            sess.error = str(e)
-            sess.dbg('4.换取凭据', '异常：%s' % e)
-            sess.message = '获取登录凭据异常：%s' % e
-            sess.done = True
-            return sess
+        # ---- 第 4 步：换取 cookie（一次扫码，自动轮试多个设备身份）----
+        cookie, tried = _obtain_cookie(sess)
+        sess.tried_apps = tried
 
-        sess.dbg('4.换取凭据(app=%s)' % sess.app, result)
-        data = (result or {}).get('data') or {}
-        cookie = data.get('cookie') or ''
-        if not cookie:
-            detail = _tok_msg(result)
-            sess.error = detail
-            hint = ''
-            if '参数' in detail:
-                hint = '｜多半是登录设备与二维码不匹配，换个「登录设备」重新生成二维码再试'
-            elif 'IP' in detail or '老乡' in detail:
-                hint = '｜115 风控拦截了本机 IP，换网络/挂代理，或改用「手动粘贴 Cookie」'
-            sess.message = '获取登录凭据失败：%s%s' % (detail, hint)
-        else:
+        if cookie:
+            sess.app_used = next((t['app'] for t in tried if t['ok']), sess.app)
             sess.cookies = cookie
-            sess.message = '登录成功'
-        sess.done = True
+            sess.message = '登录成功（设备：%s）' % sess.app_used
+            sess.done = True
+        else:
+            first = tried[0]['detail'] if tried else '未知错误'
+            sess.error = '；'.join(
+                '%s → %s' % (t['app'], t['detail']) for t in tried)[:400]
+            # 「老乡验证失败 / IP异常」通常意味着手机上还没点确认，或已被风控。
+            # 退回等待态让用户继续操作，但限制重试轮次，避免一直空转请求。
+            if any(k in first for k in ('老乡', '验证失败', 'IP')) and sess.retry_count < 3:
+                sess.retry_count += 1
+                sess.status = 1
+                sess._last_status_raw = '__reset__'
+                sess.message = ('手机上可能还没点「确认登录」（115 返回：%s），'
+                                '请在 115 App 里确认后稍等几秒' % first)
+            else:
+                hint = ''
+                if '参数' in first:
+                    hint = '｜已自动试过 %d 个设备都不行，点「复制诊断」发出来定位' % len(tried)
+                elif 'IP' in first or '老乡' in first:
+                    hint = '｜115 风控拦截了本机 IP：换网络/挂代理重试，或改用「手动粘贴 Cookie」'
+                sess.message = '获取登录凭据失败：%s%s' % (first, hint)
+                sess.done = True
     elif status == -1:
         sess.message = '二维码已过期，请重新获取'
         sess.done = True
@@ -231,6 +288,32 @@ def qr_poll(sid):
 def qr_cancel(sid):
     with _qr_lock:
         _qr_sessions.pop(sid, None)
+
+
+def _time_skew_check():
+    """对比本机时间与 115 服务器时间（HTTP Date 头），返回 (是否正常, 说明)
+
+    115 的扫码凭证（uid/time/sign）带签名校验，本机时间偏差过大时会
+    出现各种莫名报错。这是排查「参数错误」时最容易被忽略的一环。
+    """
+    try:
+        import email.utils
+        import urllib.request
+        req = urllib.request.Request(
+            'https://qrcodeapi.115.com/get/status/',
+            headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            date_hdr = r.headers.get('Date')
+        if not date_hdr:
+            return True, '服务器未返回 Date 头，跳过'
+        server_ts = email.utils.parsedate_to_datetime(date_hdr).timestamp()
+        skew = abs(time.time() - server_ts)
+        if skew < 300:
+            return True, '与 115 服务器偏差 %.0f 秒，正常' % skew
+        return False, ('与 115 服务器偏差 %.0f 秒 ⚠️ 超过 5 分钟会导致登录校验失败，'
+                       '请在飞牛「系统设置 → 时间」校准或配置 NTP' % skew)
+    except Exception as e:  # noqa: BLE001
+        return True, '检查失败（不影响登录）：%s' % str(e)[:80]
 
 
 def qr_selftest(app=DEFAULT_APP):
@@ -276,6 +359,9 @@ def qr_selftest(app=DEFAULT_APP):
                 % (st.get('state'), status))
         except Exception as e:  # noqa: BLE001
             add('3. 轮询扫码状态', False, e)
+
+    # 4) 时间同步（偏差过大会导致扫码凭证签名校验失败）
+    add('4. 时间同步检查', *_time_skew_check())
 
     return {'app': app, 'steps': steps,
             'all_ok': all(s['ok'] for s in steps)}

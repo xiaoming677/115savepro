@@ -31,7 +31,7 @@ LOG_DIR = os.path.join(BASE_DIR, 'log')
 SECRET_FILE = os.path.join(CONFIG_DIR, 'secret.key')
 
 # 版本号：更新镜像后可在页面左下角 / GET /api/version 核对
-APP_VERSION = '1.2.0'
+APP_VERSION = '1.3.0'
 
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'static'), static_url_path='/static')
 app.config['JSON_AS_ASCII'] = False
@@ -200,6 +200,8 @@ def api_qr_poll():
         'has_cookie': bool(sess.cookies),
         'error': sess.error,
         'app': sess.app,
+        'app_used': sess.app_used,
+        'tried_apps': sess.tried_apps,
         'debug': sess.debug,
     })
 
@@ -214,7 +216,8 @@ def api_qr_commit():
         return fail('还没有拿到登录凭据，请确认扫码已在手机上确认')
     username = (data.get('username') or '').strip()
     try:
-        name = storage.add_user(username, sess.cookies, app=sess.app,
+        name = storage.add_user(username, sess.cookies,
+                                app=sess.app_used or sess.app,
                                 remark=data.get('remark') or '',
                                 make_current=data.get('make_current', True))
         info = storage.check_user(name)
@@ -235,9 +238,10 @@ def api_qr_cancel():
 @app.route('/api/qr/selftest', methods=['POST'])
 @login_required
 def api_qr_selftest():
-    """扫码登录自检：验证 token / 二维码 / 状态轮询三个接口是否都通
+    """扫码登录自检：验证 token / 二维码 / 状态轮询 / 时间同步 四项
 
-    不需要真的扫码。排查「参数错误」时先跑这个。
+    不需要真的扫码。排查「参数错误」时先跑这个 —— 若四项全绿，
+    说明代码与网络都没问题，问题在 115 侧（风控或账号状态）。
     """
     data = request.get_json(silent=True) or {}
     try:

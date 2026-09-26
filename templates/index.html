@@ -379,8 +379,14 @@ function qrDiagText(){
   lines.push('=== 115SavePro 扫码登录诊断 ===');
   lines.push('时间: ' + new Date().toISOString());
   lines.push('登录设备(app): ' + (d.app || ''));
+  if (d.app_used) lines.push('最终成功设备: ' + d.app_used);
   lines.push('当前状态: status=' + d.status + '  ' + (d.message || ''));
   lines.push('错误: ' + (d.error || '（无）'));
+  if ((d.tried_apps || []).length){
+    lines.push('');
+    lines.push('--- 换取凭据时自动尝试过的设备 ---');
+    d.tried_apps.forEach(t => lines.push(`  ${t.ok ? '✓ 成功' : '✗ 失败'}  ${t.app}  →  ${t.detail}`));
+  }
   lines.push('');
   lines.push('--- 各步原始响应 ---');
   (d.debug || []).forEach(r => lines.push(`[${r.t}] ${r.step}: ${r.detail}`));
@@ -398,10 +404,10 @@ function qrLoginModal(){
       </div>
       <div style="flex:1;min-width:250px">
         <div class="field"><label>登录设备</label><select id="qr-app"></select>
-          <div class="hint">扫码后 Cookie 以该设备身份签发。<b>如果报「参数错误」，换一个设备重新生成二维码再试</b>（推荐顺序：支付宝小程序 → 安卓端 → 网页端）。</div></div>
+          <div class="hint">确认后系统会<b>自动依次尝试多个设备身份</b>换取凭据，不用手动换设备重扫。这里选的只是第一个尝试的。</div></div>
         <div class="field"><label>账号备注名（可选）</label><input type="text" id="qr-name" placeholder="留空自动用 UID 命名"></div>
         <div class="field"><label>备注（可选）</label><input type="text" id="qr-remark" placeholder="例如：主号 / 影视号"></div>
-        <div class="hint">用 <b>115 手机 App</b> 扫码 → 手机上点「确认登录」。</div>
+        <div class="hint">用 <b>115 手机 App</b> 扫码，扫完后<b>必须在手机上点「确认登录」</b>，否则拿不到凭据。</div>
       </div>
     </div>
     <div id="qr-err" class="hidden" style="margin-top:12px;padding:9px 11px;border-radius:8px;
@@ -443,14 +449,17 @@ function qrLoginModal(){
             done = true; clearInterval(timer);
             if (d.has_cookie){
               $('#qr-confirm', w).disabled = false;
-              $('#qr-status', w).textContent = '登录成功，点「保存账号」完成';
+              $('#qr-status', w).textContent = '登录成功'
+                + (d.app_used ? `（设备：${d.app_used}）` : '') + '，点「保存账号」完成';
               $('#qr-status', w).style.color = 'var(--ok)';
             } else {
               $('#qr-status', w).style.color = 'var(--err)';
               const eb = $('#qr-err', w);
               eb.classList.remove('hidden');
               eb.innerHTML = '<b>登录失败</b>：' + esc(d.error || d.message)
-                + '<br>可尝试：① 在「登录设备」换一个再点「重新生成二维码」　② 换网络 / 关掉代理（115 风控）　③ 用「手动粘贴 Cookie」';
+                + '<br>① 点下方「<b>复制诊断</b>」把内容发出来 —— 里面含每个设备的详细报错，能一次定位'
+                + '<br>② 换网络 / 关掉代理后重试（115 对 IP 的风控）'
+                + '<br>③ 兜底：改用「<b>手动粘贴 Cookie</b>」，转存功能并不依赖扫码';
             }
           }
         }catch(e){ /* 轮询失败忽略 */ }
