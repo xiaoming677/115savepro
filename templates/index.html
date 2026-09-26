@@ -375,7 +375,8 @@ function qrLoginModal(){
         <div class="field"><label>备注（可选）</label><input type="text" id="qr-remark" placeholder="例如：主号 / 影视号"></div>
         <div class="hint">用 <b>115 手机 App</b> 扫码 → 手机上点确认即可。</div>
       </div>
-    </div>`, `<button class="btn" data-close>关闭</button>
+    </div>`, `<button class="btn" id="qr-selftest">接口自检</button>
+    <button class="btn" data-close>关闭</button>
     <button class="btn primary" id="qr-confirm" disabled>保存账号</button>`);
   let sid = null, timer = null, done = false;
   (async () => {
@@ -403,6 +404,23 @@ function qrLoginModal(){
   })();
 
   w.addEventListener('click', async e => {
+    if (e.target.id === 'qr-selftest'){
+      const app = $('#qr-app', w).value;
+      try{
+        const r = await api('/api/qr/selftest', {method:'POST', body:{app}});
+        const d = r.data;
+        modal('扫码登录自检 · ' + esc(d.app),
+          '<div class="muted" style="margin-bottom:10px;font-size:12.5px">这个自检不需要真的扫码，只验证 115 的三个接口是否都通。</div>'
+          + table(['步骤','结果','详情'], (d.steps||[]).map(s=>[
+              esc(s.step),
+              s.ok ? '<span class="badge ok">通过</span>' : '<span class="badge err">失败</span>',
+              `<span class="mono" style="font-size:12px">${esc(s.detail)}</span>`
+            ]))
+          + `<div style="margin-top:12px">${d.all_ok
+              ? '<span class="badge ok">三个接口全部正常</span> 说明代码侧没问题；若扫码后仍失败，多半是 115 风控（换网络或改用「手动粘贴 Cookie」）'
+              : '<span class="badge err">有接口失败</span> 把上面的详情发我，我来定位'}</div>`);
+      }catch(err){ toast(err.message, 'err'); }
+    }
     if (e.target.id === 'qr-confirm'){
       try{
         const r = await api('/api/qr/commit', {method:'POST', body:{sid, username: $('#qr-name', w).value.trim(), remark: $('#qr-remark', w).value.trim()}});

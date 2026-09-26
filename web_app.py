@@ -23,7 +23,7 @@ from history_db import (get_all_history, get_kv, get_qms_logs, get_task_history,
 from scheduler import TaskScheduler
 from storage_115 import (AVAILABLE_APPS, DEFAULT_APP, Storage115, StorageError,
                          human_size, qr_cancel, qr_new_session, qr_poll,
-                         _qr_sessions)
+                         qr_selftest, _qr_sessions)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(BASE_DIR, 'config')
@@ -215,6 +215,21 @@ def api_qr_cancel():
     data = request.get_json(silent=True) or {}
     qr_cancel(data.get('sid') or '')
     return ok()
+
+
+@app.route('/api/qr/selftest', methods=['POST'])
+@login_required
+def api_qr_selftest():
+    """扫码登录自检：验证 token / 二维码 / 状态轮询三个接口是否都通
+
+    不需要真的扫码。排查「参数错误」时先跑这个。
+    """
+    data = request.get_json(silent=True) or {}
+    try:
+        result = qr_selftest(data.get('app') or DEFAULT_APP)
+    except Exception as e:  # noqa: BLE001
+        return fail('自检失败：%s' % e)
+    return ok(result)
 
 
 @app.route('/api/apps', methods=['GET'])

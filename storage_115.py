@@ -57,6 +57,7 @@ class QrSession:
     def __init__(self):
         self.uid = ''
         self.token = {}
+        self.app = DEFAULT_APP
         self.created_at = 0
         self.status = 0          # 0 等待扫码 / 1 已扫码 / 2 已确认 / -1 过期 / -2 取消
         self.message = '等待扫码'
@@ -69,22 +70,40 @@ _qr_sessions = {}
 _qr_lock = threading.Lock()
 
 
+def _tok_msg(resp):
+    """把 115 的响应压成一句人话（含 errno，便于排查）"""
+    if not isinstance(resp, dict):
+        return '响应异常'
+    msg = resp.get('message') or resp.get('error') or ''
+    errno = resp.get('errno') or resp.get('code')
+    if msg and errno:
+        return '%s（errno=%s）' % (msg, errno)
+    return msg or ('state=%s' % resp.get('state'))
+
+
 def qr_new_session(app=DEFAULT_APP):
-    """新建一个扫码会话，返回 (session_id, 二维码 PNG bytes, 二维码链接)"""
-    resp = P115Client.login_qrcode_token()
+    """新建扫码会话，返回 (session_id, QrSession)
+
+    关键：token / 二维码 / 换 cookie 这三步**必须使用同一个 app**。
+    115 会把 app 当作会话的一部分校验，混用会返回「参数错误」之类的失败。
+    （p115client 的 login_qrcode_token 默认 app='web'，如果扫完再用别的 app
+      去换 cookie，就会 app 不匹配。）
+    """
+    app = (app or DEFAULT_APP).strip() or DEFAULT_APP
+    resp = P115Client.login_qrcode_token(app=app)
     if not resp or resp.get('state') != 1:
-        raise StorageError('获取二维码失败：%s' % (resp.get('message') or '115 接口返回异常'))
+        raise StorageError('获取二维码失败：%s' % _tok_msg(resp))
     data = dict(resp.get('data') or {})
     sid = data.get('uid') or ''
     if not sid:
         raise StorageError('获取二维码失败：接口未返回 uid')
     sess = QrSession()
     sess.uid = sid
+    sess.app = app
     sess.token = {k: data.get(k) for k in ('uid', 'time', 'sign')}
     sess.created_at = time.time()
-    sess.app = app
     try:
-        sess.qrcode_png = P115Client.login_qrcode(sid)
+        sess.qrcode_png = P115Client.login_qrcode(sid, app=app)
     except Exception as e:  # noqa: BLE001
         raise StorageError('生成二维码图片失败：%s' % e)
     with _qr_lock:
@@ -96,7 +115,7 @@ def qr_new_session(app=DEFAULT_APP):
 
 
 def qr_poll(sid):
-    """轮询扫码状态。返回 QrSession 的公开字段。"""
+    """轮询扫码状态。返回 QrSession（含 cookies / error / message）"""
     with _qr_lock:
         sess = _qr_sessions.get(sid)
     if not sess:
@@ -113,41 +132,106 @@ def qr_poll(sid):
     except Exception as e:  # noqa: BLE001
         sess.message = '查询状态失败：%s' % e
         return sess
+    # 注意：外层 state 是"接口调用是否成功"，扫码进度在 data.status
+    # 115 在「等待扫码」阶段可能返回 data:{}，此时按 0 处理
     status = ((resp or {}).get('data') or {}).get('status')
     if status is None:
-        status = 0            # 115 在「等待扫码」阶段可能不返回 status 字段
-    sess.status = int(status)
-    if status == 0:
+        status = 0
+    try:
+        sess.status = int(status)
+    except (TypeError, ValueError):
+        sess.status = 0
+
+    if sess.status == 0:
         sess.message = '等待扫码'
-    elif status == 1:
+    elif sess.status == 1:
         sess.message = '已扫码，请在手机上确认登录'
-    elif status == 2:
-        sess.message = '登录成功'
+    elif sess.status == 2:
+        sess.message = '已确认，正在获取登录凭据…'
         try:
-            result = P115Client.login_qrcode_scan_result(sid, app=getattr(sess, 'app', DEFAULT_APP))
-            cookie = ((result or {}).get('data') or {}).get('cookie') or ''
+            result = P115Client.login_qrcode_scan_result(sess.uid, app=sess.app)
+            data = (result or {}).get('data') or {}
+            cookie = data.get('cookie') or ''
             if not cookie:
-                raise StorageError('登录成功但未取到 Cookie：%s' % result)
-            sess.cookies = cookie
+                # 115 常见失败：参数错误 / 老乡验证失败 / IP登录异常
+                detail = _tok_msg(result)
+                hint = ''
+                if '参数' in detail:
+                    hint = '；多半是登录设备（app）与二维码不匹配，换个「登录设备」再试'
+                elif 'IP' in detail or '异常' in detail:
+                    hint = '；115 风控拦截了本机 IP，可尝试换网络/挂代理，或改用「手动粘贴 Cookie」'
+                sess.error = detail
+                sess.message = '获取登录凭据失败：%s%s' % (detail, hint)
+            else:
+                sess.cookies = cookie
+                sess.message = '登录成功'
             sess.done = True
         except Exception as e:  # noqa: BLE001
             sess.error = str(e)
-            sess.message = '登录确认失败：%s' % e
+            sess.message = '获取登录凭据异常：%s' % e
             sess.done = True
-    elif status == -1:
+    elif sess.status == -1:
         sess.message = '二维码已过期，请重新获取'
         sess.done = True
-    elif status == -2:
+    elif sess.status == -2:
         sess.message = '已取消登录'
         sess.done = True
     else:
-        sess.message = '未知状态 %s' % status
+        sess.message = '未知状态 %s' % sess.status
     return sess
 
 
 def qr_cancel(sid):
     with _qr_lock:
         _qr_sessions.pop(sid, None)
+
+
+def qr_selftest(app=DEFAULT_APP):
+    """自检扫码登录各环节，返回每一步的原始结果（用于排查"参数错误"）
+
+    不需要真的扫码，只验证三个接口是否都通、app 是否一致可用。
+    """
+    app = (app or DEFAULT_APP).strip() or DEFAULT_APP
+    steps = []
+
+    def add(name, ok, detail):
+        steps.append({'step': name, 'ok': bool(ok), 'detail': str(detail)[:300]})
+
+    # 1) 取 token
+    try:
+        tok = P115Client.login_qrcode_token(app=app)
+        ok = bool(tok) and tok.get('state') == 1
+        add('1. 获取二维码 token（app=%s）' % app, ok, _tok_msg(tok) if not ok else
+            'uid=%s' % ((tok.get('data') or {}).get('uid', ''))[:16] + '…')
+        uid = (tok.get('data') or {}).get('uid') if ok else None
+    except Exception as e:  # noqa: BLE001
+        add('1. 获取二维码 token（app=%s）' % app, False, e)
+        uid = None
+
+    # 2) 取二维码图片（必须用同一个 app）
+    if uid:
+        try:
+            png = P115Client.login_qrcode(uid, app=app)
+            add('2. 生成二维码图片', len(png) > 100, '%d 字节' % len(png))
+        except Exception as e:  # noqa: BLE001
+            add('2. 生成二维码图片', False, e)
+
+    # 3) 查状态（未扫码时应返回 data:{} 或 status=0）
+    if uid:
+        try:
+            tok2 = P115Client.login_qrcode_token(app=app)
+            d2 = dict(tok2.get('data') or {})
+            st = P115Client.login_qrcode_scan_status(
+                {k: d2.get(k) for k in ('uid', 'time', 'sign')})
+            ok = bool(st) and st.get('state') == 1
+            status = ((st.get('data') or {}).get('status'))
+            add('3. 轮询扫码状态', ok, 'state=%s data.status=%s（未扫码时为空或 0 属正常）'
+                % (st.get('state'), status))
+        except Exception as e:  # noqa: BLE001
+            add('3. 轮询扫码状态', False, e)
+
+    return {'app': app, 'steps': steps,
+            'all_ok': all(s['ok'] for s in steps)}
 
 
 # --------------------------------------------------------------------------
