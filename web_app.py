@@ -18,6 +18,7 @@ from loguru import logger
 
 import notify as notifier
 import qms_client
+import updater
 from history_db import (get_all_history, get_kv, get_qms_logs, get_task_history,
                         set_kv)
 from scheduler import TaskScheduler
@@ -31,7 +32,7 @@ LOG_DIR = os.path.join(BASE_DIR, 'log')
 SECRET_FILE = os.path.join(CONFIG_DIR, 'secret.key')
 
 # 版本号：更新镜像后可在页面左下角 / GET /api/version 核对
-APP_VERSION = '1.3.0'
+APP_VERSION = '1.4.0'
 
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'static'), static_url_path='/static')
 app.config['JSON_AS_ASCII'] = False
@@ -742,7 +743,7 @@ def api_config():
 def api_config_update():
     data = request.get_json(silent=True) or {}
     for section in ('cron', 'notify', 'scheduler', 'quota_alert', 'regex',
-                    'file_operations', 'offline'):
+                    'file_operations', 'offline', 'update'):
         if section in data and isinstance(data[section], dict):
             storage.config.setdefault(section, {})
             if section == 'notify' and 'direct_fields' in data[section]:
@@ -919,6 +920,66 @@ def api_qms_trigger_all():
 def api_qms_logs():
     lid = request.args.get('id') or ''
     return ok(get_qms_logs(lid, limit=int(request.args.get('limit', 30))))
+
+
+# --------------------------------------------------------------------------
+# 版本检查与一键更新
+# --------------------------------------------------------------------------
+def _self_update_enabled():
+    return bool((storage.config.get('update') or {}).get('allow_self_update', True))
+
+
+@app.route('/api/update/check', methods=['GET'])
+@login_required
+def api_update_check():
+    """检查是否有新版本（force=1 跳过 5 分钟缓存）"""
+    force = (request.args.get('force') or '') in ('1', 'true', 'yes')
+    return ok(updater.check_update(APP_VERSION, use_cache=not force))
+
+
+@app.route('/api/update/env', methods=['GET'])
+@login_required
+def api_update_env():
+    """一键更新的可用性 —— 不可用时把「缺什么、怎么补」讲清楚"""
+    supported, reason, info = updater.update_capability()
+    if supported and not _self_update_enabled():
+        supported, reason = False, '已在设置里关闭「允许一键更新」'
+    return ok({
+        'version': APP_VERSION,
+        'supported': supported,
+        'reason': reason,
+        'container': info,
+        'assistant_image': updater.ASSISTANT_IMAGE,
+        'socket': updater.DOCKER_SOCKET,
+        'enabled': _self_update_enabled(),
+    })
+
+
+@app.route('/api/update/apply', methods=['POST'])
+@login_required
+def api_update_apply():
+    """一键更新：启动助手容器去拉新镜像并重建本容器
+
+    本请求会立刻返回 —— 几秒后本容器会被助手停掉重建，页面会短暂断线。
+    """
+    if not _self_update_enabled():
+        return fail('已在设置里关闭「允许一键更新」')
+    started, msg = updater.run_self_update()
+    return ok({'started': True, 'message': msg}) if started else fail(msg)
+
+
+@app.route('/api/update/log', methods=['GET'])
+@login_required
+def api_update_log():
+    """上次更新的输出（由助手容器写入 config/update.log）"""
+    return ok({'log': updater.read_update_log()})
+
+
+@app.route('/api/update/log/clear', methods=['POST'])
+@login_required
+def api_update_log_clear():
+    updater.clear_update_log()
+    return ok()
 
 
 # --------------------------------------------------------------------------

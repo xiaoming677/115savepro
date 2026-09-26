@@ -177,6 +177,49 @@ docker compose pull && docker compose up -d
 
 **以后更新就重复这一条命令。** 就这样，不用改任何配置。
 
+#### 面板内一键更新（v1.4.0+，最省事）
+
+**「系统设置 → 版本更新」**里可以直接检查并更新，不用碰 Docker 界面：
+
+- **检查更新** —— 零配置。容器通网即可用，自动对比 GitHub 上的最新版本与更新说明。
+- **一键更新** —— 需要**额外挂载 docker.sock**（见下）。点一下按钮就自动完成
+  「拉新镜像 → 重建容器」，页面会自动等待服务恢复并提示新版本号。
+
+**启用一键更新**：在 `docker-compose.yml` 的 `volumes:` 下加一行，然后 `docker compose up -d`：
+
+```yaml
+    volumes:
+      - ./config:/app/config
+      - ./log:/app/log
+      - /var/run/docker.sock:/var/run/docker.sock    # ← 加这一行
+```
+
+> ⚠️ **安全提示**：挂载 `docker.sock` 等于把宿主机 Docker 的控制权交给这个容器
+> （等价于 root 权限）。**不需要一键更新就不要加** —— 检查更新、以及上面那条手动
+> 更新命令都不受任何影响。
+
+**它是怎么做到的**（值得一读，因为有点绕）：**容器没法自己重建自己** —— 一旦被
+停止，进程就结束了，后续动作没人执行。所以点「立即更新」后，程序会通过
+Docker Engine API 启动一个**一次性助手容器**，由它在你退出之后继续干活：
+
+```sh
+sleep 3                # 留出时间让页面收到响应
+cd <compose 项目目录>
+docker compose pull
+docker compose up -d --force-recreate
+```
+
+之所以走 `docker compose` 而不用 API 手拼容器参数，是因为 **compose 文件里有权威配置** ——
+端口、挂载、环境变量、网络模式全部以它为准，不会因为重建而丢失或走样。
+
+几个实现细节：
+
+- 助手镜像用 `docker:cli`（自带 compose 插件），执行完自动删除；想换镜像可以设环境变量 `UPDATE_ASSISTANT_IMAGE`
+- **项目目录自动识别**：读容器标签 `com.docker.compose.project.working_dir`，
+  所以不管你是在飞牛界面粘贴 YAML 还是 SSH 手写，位置都能自动找到
+- **检查更新失败不影响使用**：容器访问 GitHub 可能被网络限制，界面会提示去浏览器看 Releases
+- **更新过程有日志**：写进 `config/update.log`，面板里点「上次更新日志」就能看
+
 #### 飞牛 fnOS（图形界面）用户看这里
 
 飞牛自带的 Docker **没有「自动检测镜像更新」这个功能**（[社区已确认的缺陷](https://club.fnnas.com/)）——
@@ -620,6 +663,36 @@ git push origin v1.1.0
 ---
 
 ## 更新日志
+
+### v1.4.0
+
+**新增「版本更新」：面板内检查 + 一键更新**
+
+「系统设置 → 版本更新」现在可以：
+
+- **检查更新**（零配置）—— 对比 GitHub Releases 上的最新版，显示版本号、发布时间与更新说明
+- **一键更新**（需额外挂载 `docker.sock`）—— 点一下就自动完成「拉新镜像 → 重建容器」，
+  页面自动等待服务恢复，不用再去飞牛 Docker 界面手动拉取 + 重构
+
+**实现要点：容器无法自己重建自己。** 一旦被停止，进程就结束了，后续动作没人执行。
+所以点「立即更新」后会启动一个**一次性助手容器**（`docker:cli`，自带 compose 插件），
+由它在旧容器退出之后执行：
+
+```sh
+sleep 3 && cd <compose 项目目录> && docker compose pull && docker compose up -d --force-recreate
+```
+
+走 `docker compose` 而不是用 Docker API 手拼容器参数，是因为 **compose 文件里有权威配置** ——
+端口、挂载、环境变量、网络模式全部以它为准，重建后不会走样。项目目录自动读取容器标签
+`com.docker.compose.project.working_dir`，飞牛界面粘贴 YAML 的场景也能正确定位。
+
+助手容器用 `AutoRemove`，执行完自动删除；更新过程写入 `config/update.log`，
+可在面板里点「上次更新日志」查看。
+
+**不挂 `docker.sock` 也能用**：检查更新照常工作，界面会直接给出手动更新命令。
+（挂载 `docker.sock` 相当于把宿主机 Docker 的控制权交给该容器，UI 与文档里都标注了这一点。）
+
+**`GET /api/update/env`** 会明确报告「缺什么、怎么补」，而不是笼统一句"不支持"。
 
 ### v1.3.0
 

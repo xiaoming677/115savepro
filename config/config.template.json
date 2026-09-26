@@ -50,5 +50,9 @@
     "offline": {
         "auto_trigger_qms": true,
         "watch_schedule": "*/5 * * * *"
+    },
+    "update": {
+        "allow_self_update": true,
+        "auto_check": true
     }
 }

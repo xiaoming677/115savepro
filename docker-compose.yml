@@ -28,6 +28,11 @@ services:
       # config 存账号 Cookie / 任务 / 历史 / QMS 配置，必须持久化
       - ./config:/app/config
       - ./log:/app/log
+      # 【可选】把下面这行取消注释并重新 up -d，就能在面板「系统设置 → 版本更新」
+      # 里一键更新，不用再去飞牛 Docker 界面手动拉镜像 + 重构。
+      #   ⚠️ 挂载 docker.sock 相当于把宿主机 Docker 的控制权交给本容器（等价 root），
+      #      请自行评估。不需要一键更新就不要开 —— 检查更新与手动更新命令都不受影响。
+      # - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - TZ=Asia/Shanghai
       - PORT=5000

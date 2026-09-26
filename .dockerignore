@@ -11,6 +11,8 @@ config/history.db-wal
 config/history.db-shm
 config/secret.key
 config/config.json.tmp
+config/update.log
+config/*.log
 *.md
 Dockerfile
 docker-compose.yml
