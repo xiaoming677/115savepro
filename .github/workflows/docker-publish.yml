@@ -38,34 +38,37 @@ jobs:
       - name: 检查 Docker Hub 配置
         id: dh
         env:
-          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          # Docker Hub 用户名不是机密，优先从 Repository variable 读（方便修改），
+          # 也兼容放在 Secret 里。只有 Token 必须放 Secret。
+          DH_USER: ${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}
           DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
+          echo "user=$DH_USER" >> "$GITHUB_OUTPUT"
           if [ -n "$DH_USER" ] && [ -n "$DH_TOKEN" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "✅ 检测到 Docker Hub 配置，将同时推送到 Docker Hub 和 GHCR"
+            echo "检测到 Docker Hub 配置（用户名：$DH_USER），将同时推送到 Docker Hub 和 GHCR"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Docker Hub 未配置::未检测到 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN，本次只推送到 GHCR（ghcr.io）。如需推 Docker Hub，请在仓库 Settings → Secrets and variables → Actions 里配置这两个 Secret。"
+            [ -z "$DH_USER" ] && echo "::warning::缺少 Docker Hub 用户名，请配置 Repository variable 或 Secret「DOCKERHUB_USERNAME」"
+            [ -z "$DH_TOKEN" ] && echo "::warning::缺少 Docker Hub Token，请配置 Repository secret「DOCKERHUB_TOKEN」"
+            echo "::notice title=Docker Hub 未配置::本次只推送到 GHCR（ghcr.io）。配置方法见仓库 Settings → Secrets and variables → Actions，详见 README「发布与更新」章节。"
           fi
 
       # ---------- 组装要推送的镜像地址 ----------
       - name: 组装镜像列表
         id: imgs
         env:
-          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_USER: ${{ steps.dh.outputs.user }}
         run: |
           {
             echo "list<<EOF"
             # Docker Hub 需要小写镜像名
             if [ -n "$DH_USER" ]; then
-              echo "${DH_USER,,}/${IMAGE_NAME}"
+              echo "$(echo "$DH_USER" | tr '[:upper:]' '[:lower:]')/${IMAGE_NAME}"
             fi
             echo "$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]' | sed 's|^|ghcr.io/|')"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-          echo "将推送的镜像："
-          cat "$GITHUB_OUTPUT"
 
       - name: 设置 QEMU
         uses: docker/setup-qemu-action@v3
@@ -77,7 +80,7 @@ jobs:
         if: steps.dh.outputs.enabled == 'true'
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: ${{ steps.dh.outputs.user }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: 登录 GHCR

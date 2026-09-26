@@ -349,22 +349,54 @@ python web_app.py          # 默认 0.0.0.0:5000，可用 PORT / HOST 环境变�
 
 ### 配置 Docker Hub（可选，只做一次）
 
-1. **在 Docker Hub 建一个 Access Token**
-   Docker Hub → 右上角头像 → Account settings → Personal access tokens → New Access Token，
-   权限选 **Read & Write**，建好**立刻复制**（只显示一次）。
+只需要 **1 个 Secret + 1 个 Variable**（用户名不是机密，所以放 Variable 更合适）：
 
-2. **在 GitHub 仓库里填两个 Secret**
-   仓库 → Settings → Secrets and variables → Actions → New repository secret：
+**① 在 Docker Hub 建 Access Token**
+Docker Hub → 右上角头像 → Account settings → Personal access tokens → New Access Token，
+权限选 **Read & Write**，建好**立刻复制**（只显示一次）。
 
-   | Secret 名 | 值 |
-   |---|---|
-   | `DOCKERHUB_USERNAME` | 你的 Docker Hub 用户名 |
-   | `DOCKERHUB_TOKEN` | 上一步复制的 Token |
+**② 在 GitHub 仓库里配置**
 
-3. **重新触发一次构建**
-   Actions 页面 → 左侧选 `Build and Push Docker Image` → Run workflow。
-   成功后推送目标会变成 **Docker Hub + GHCR**，Docker Hub 上就能看到
-   `你的用户名/115savepro:latest` 了。
+仓库 → Settings → Secrets and variables → Actions：
+
+| 标签页 | 类型 | 名称 | 值 |
+|---|---|---|---|
+| **Variables** | New repository variable | `DOCKERHUB_USERNAME` | 你的 Docker Hub 用户名 |
+| **Secrets** | New repository secret | `DOCKERHUB_TOKEN` | 上一步复制的 Token |
+
+> ⚠️ 两个容易踩的坑：
+> 1. **别建到 Environments 标签页里** —— 环境级 Secrets 只有工作流显式声明 `environment:` 才读得到，本工作流没声明。要用 **Actions** 标签页。
+> 2. **名称必须一字不差**（全大写、下划线），值才填实际内容。
+
+**③ 重新触发构建**
+Actions → `Build and Push Docker Image` → Run workflow。
+成功后推送目标会变成 **Docker Hub + GHCR**，日志里 `登录 Docker Hub` 会从 `skipped` 变成 `success`。
+
+### 用命令行配置（更不容易出错）
+
+```bash
+# 用户名（值直接用参数给，不会填错输入框）
+gh secret set DOCKERHUB_USERNAME -R <owner>/<repo>        # 或 gh variable set，两者都支持
+
+# Token（交互式隐藏输入，不会留在命令历史里）
+gh secret set DOCKERHUB_TOKEN -R <owner>/<repo>
+
+# 核对
+gh secret list -R <owner>/<repo>
+gh variable list -R <owner>/<repo>
+```
+
+### 排查：构建成功但没推 Docker Hub
+
+说明工作流没读到配置。逐项检查：
+
+```bash
+gh api repos/<owner>/<repo>/actions/secrets      --jq '.total_count'   # 仓库级 Secrets
+gh api repos/<owner>/<repo>/actions/variables    --jq '.total_count'   # 仓库级 Variables
+gh api repos/<owner>/<repo>/environments                               # 是不是建到环境里了
+```
+
+**仓库级为 0 但环境里有内容** → 就是建错标签页了，见上面 ⚠️。
 
 ### 以后怎么发新版
 
