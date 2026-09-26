@@ -15,7 +15,8 @@
 #   打开下面的 build: . 并注释掉 image 行，然后 docker compose up -d --build
 
 services:
-  115savepro:
+  # 服务名避免以数字开头：部分 compose 实现/网页编辑器会把纯数字开头的键误解析
+  save115:
     image: ghcr.io/xiaoming677/115savepro:latest
     # build: .
     container_name: 115savepro
