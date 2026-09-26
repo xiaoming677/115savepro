@@ -59,11 +59,14 @@ jobs:
         id: imgs
         env:
           DH_USER: ${{ steps.dh.outputs.user }}
+          # 关键：必须跟「登录 Docker Hub」用同一个判断条件。
+          # 只判断用户名会导致"有用户名但没 Token"时把 Docker Hub 镜像写进列表，
+          # 但登录被跳过 -> push 报 401 access token has insufficient scopes。
+          DH_ENABLED: ${{ steps.dh.outputs.enabled }}
         run: |
           {
             echo "list<<EOF"
-            # Docker Hub 需要小写镜像名
-            if [ -n "$DH_USER" ]; then
+            if [ "$DH_ENABLED" = "true" ] && [ -n "$DH_USER" ]; then
               echo "$(echo "$DH_USER" | tr '[:upper:]' '[:lower:]')/${IMAGE_NAME}"
             fi
             echo "$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]' | sed 's|^|ghcr.io/|')"
