@@ -4,6 +4,11 @@ name: Build and Push Docker Image
 #   1. 推送到 main        -> 构建并推送 :latest
 #   2. 推送 v 开头的 tag  -> 构建并推送 :v1.2.3 和 :1.2.3
 #   3. 手动触发
+#
+# 推送目标：
+#   - GHCR（ghcr.io/<owner>/<repo>）：始终推送，用仓库自带的 GITHUB_TOKEN，零配置
+#   - Docker Hub：仅当仓库已配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN 两个 Secret 时才推送
+#     没配置不会报错，会自动跳过并只推 GHCR。
 on:
   push:
     branches: [main, master]
@@ -11,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       push:
-        description: '是否推送镜像（false 则只构建验证）'
+        description: '是否推送镜像（false 则只构建验证，不推任何仓库）'
         type: boolean
         default: true
 
@@ -29,21 +34,53 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 设置 QEMU（多架构时需要）
+      # ---------- 判断 Docker Hub 是否已配置 ----------
+      - name: 检查 Docker Hub 配置
+        id: dh
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "$DH_USER" ] && [ -n "$DH_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "✅ 检测到 Docker Hub 配置，将同时推送到 Docker Hub 和 GHCR"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Docker Hub 未配置::未检测到 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN，本次只推送到 GHCR（ghcr.io）。如需推 Docker Hub，请在仓库 Settings → Secrets and variables → Actions 里配置这两个 Secret。"
+          fi
+
+      # ---------- 组装要推送的镜像地址 ----------
+      - name: 组装镜像列表
+        id: imgs
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          {
+            echo "list<<EOF"
+            # Docker Hub 需要小写镜像名
+            if [ -n "$DH_USER" ]; then
+              echo "${DH_USER,,}/${IMAGE_NAME}"
+            fi
+            echo "$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]' | sed 's|^|ghcr.io/|')"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "将推送的镜像："
+          cat "$GITHUB_OUTPUT"
+
+      - name: 设置 QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: 设置 Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: 登录 Docker Hub
-        if: github.event_name != 'workflow_dispatch' || inputs.push
+        if: steps.dh.outputs.enabled == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: 登录 GHCR
-        if: github.event_name != 'workflow_dispatch' || inputs.push
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -54,9 +91,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
-            ghcr.io/${{ github.repository }}
+          images: ${{ steps.imgs.outputs.list }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
@@ -75,15 +110,21 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: |
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
-            VCS_REF=${{ github.sha }}
 
       - name: 输出摘要
         run: |
-          echo "### 构建完成 :whale:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "镜像标签：" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### 构建完成 :whale:"
+            echo ""
+            echo "**推送目标：** $([[ '${{ steps.dh.outputs.enabled }}' == 'true' ]] && echo 'Docker Hub + GHCR' || echo '仅 GHCR')"
+            echo ""
+            echo "**镜像标签：**"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo ""
+            echo "**更新方法：**"
+            echo '```bash'
+            echo "docker compose pull && docker compose up -d"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
