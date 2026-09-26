@@ -1,4 +1,5 @@
-FROM python:3.11-slim
+# 注意：p115client 要求 Python >= 3.12，基础镜像不能低于此版本
+FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

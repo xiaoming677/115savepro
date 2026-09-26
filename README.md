@@ -106,6 +106,8 @@ pip install -r requirements.txt
 python web_app.py          # 默认 0.0.0.0:5000，可用 PORT / HOST 环境变量覆盖
 ```
 
+> **需要 Python ≥ 3.12**（`p115client` 的硬性要求，Docker 镜像用的是 `python:3.12-slim`）。
+
 ### 飞牛 NAS 上要注意的
 
 - 如果你已经用 **CloudDrive2** 把 115 挂载到本机，QMediaSync 的刮削目录要指向**挂载后的本地路径**，  
