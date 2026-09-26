@@ -1,0 +1,16 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+refs
+log
+config/config.json
+config/history.db
+config/history.db-wal
+config/history.db-shm
+config/secret.key
+config/config.json.tmp
+*.md
+Dockerfile
+docker-compose.yml

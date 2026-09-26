@@ -1,0 +1,15 @@
+# 统一换行符：避免 Windows 上提交时出现 "LF will be replaced by CRLF" 噪声
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary
+*.db binary
+
+# 工作流与脚本强制 LF
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf

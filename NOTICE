@@ -1,0 +1,36 @@
+NOTICE
+======
+
+115SavePro
+----------
+
+本项目是一个**二次开发 / 移植作品**，不是原创。
+
+### 上游来源
+
+| 项 | 内容 |
+|---|---|
+| 直接参考项目 | https://github.com/xinyuLo/bdsavepro |
+| 更上游项目 | https://github.com/kokojacket/baidu-autosave |
+| 参考内容 | 整体产品形态、任务/调度/通知/历史的分层架构、QMediaSync 联动的交互设计 |
+| 本项目做的事 | 把存储层从百度网盘（baidupcs-py）整体替换为 115 网盘（p115client），并新增离线下载、文件管理、扫码登录 |
+
+### 第三方依赖
+
+| 项目 | 许可证 | 用途 |
+|---|---|---|
+| [p115client](https://github.com/ChenyangGao/p115client) | MIT | 115 网盘 API 客户端 |
+| [APScheduler](https://github.com/agronholm/apscheduler) | MIT | 定时调度 |
+| [Flask](https://github.com/pallets/flask) | BSD-3-Clause | Web 框架 |
+| [loguru](https://github.com/Delgan/loguru) | MIT | 日志 |
+
+### 许可证
+
+本项目遵循 **GNU AGPL-3.0**（见 LICENSE 文件），与上游一致。
+
+> 依 AGPL-3.0 第 13 条：如果你通过网络使用本程序的服务，你有权获取其完整源代码。
+
+### 免责声明
+
+本项目所使用的 115 网盘接口均为非官方公开接口，未获得官方授权。
+请自行评估账号安全与使用风险，合理控制请求频率。因使用本项目造成的任何后果由使用者自行承担。

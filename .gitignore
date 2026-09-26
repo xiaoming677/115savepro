@@ -1,0 +1,14 @@
+# 数据与日志（必须持久化，不要提交）
+config/config.json
+config/history.db
+config/history.db-wal
+config/history.db-shm
+config/secret.key
+config/config.json.tmp
+log/
+.venv/
+__pycache__/
+*.pyc
+refs/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,12 @@
+-i https://pypi.tuna.tsinghua.edu.cn/simple
+--trusted-host pypi.tuna.tsinghua.edu.cn
+
+Flask==3.0.3
+APScheduler==3.10.4
+loguru==0.7.2
+requests==2.32.3
+pytz==2024.1
+
+# 锁定到本项目实测通过的版本，保证构建可复现。
+# 升级前请先按 README 的方式回归一遍「扫码登录 / 分享转存 / 离线下载」三项。
+p115client==0.0.9.6.5.1

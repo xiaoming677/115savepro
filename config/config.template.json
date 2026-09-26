@@ -1,0 +1,54 @@
+{
+    "auth": {
+        "username": "admin",
+        "password": "zxcvbnm",
+        "session_timeout": 3600
+    },
+    "p115": {
+        "users": {},
+        "current_user": null,
+        "tasks": []
+    },
+    "cron": {
+        "default_schedule": [
+            "0 10 * * *"
+        ],
+        "auto_install": true
+    },
+    "notify": {
+        "enabled": false,
+        "notification_delay": 30,
+        "direct_fields": {
+            "PUSH_PLUS_TOKEN": "",
+            "PUSH_PLUS_USER": "",
+            "BARK_PUSH": "",
+            "WEBHOOK_URL": ""
+        }
+    },
+    "scheduler": {
+        "max_workers": 1,
+        "misfire_grace_time": 3600,
+        "coalesce": true,
+        "max_instances": 1
+    },
+    "quota_alert": {
+        "enabled": true,
+        "threshold_percent": 90,
+        "check_schedule": "0 0 * * *"
+    },
+    "regex": {
+        "enabled": false,
+        "pattern": ".*\\.(mp4|mkv|avi|ts|iso)$",
+        "replace": "",
+        "description": "只转存视频文件"
+    },
+    "file_operations": {
+        "rename_delay_seconds": 0.3,
+        "batch_size": 50,
+        "concurrent_limit": 1
+    },
+    "offline": {
+        "auto_trigger_qms": true,
+        "watch_schedule": "*/5 * * * *"
+    }
+}

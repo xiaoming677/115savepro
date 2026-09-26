@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>115SavePro · 115 网盘自动转存</title>
+<style>
+:root{
+  --bg:#f4f6fa; --panel:#ffffff; --panel-2:#fafbfd; --line:#e4e8f0; --line-2:#eef1f7;
+  --text:#1f2329; --text-2:#5c6675; --text-3:#8b95a5;
+  --accent:#2f6fed; --accent-soft:#eaf1ff;
+  --ok:#12a150; --ok-soft:#e6f7ee; --warn:#d97706; --warn-soft:#fef3e2;
+  --err:#d92d20; --err-soft:#fdecea;
+  --radius:10px; --shadow:0 1px 3px rgba(16,24,40,.06),0 1px 2px rgba(16,24,40,.04);
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--text);font-size:14px;line-height:1.6}
+a{color:var(--accent);text-decoration:none}
+button,input,select,textarea{font-family:inherit;font-size:14px}
+.hidden{display:none !important}
+
+/* ---------- 登录 ---------- */
+#login{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#eef3ff,#f7f9fc)}
+.login-box{background:var(--panel);padding:36px 32px;border-radius:14px;box-shadow:0 8px 32px rgba(16,24,40,.10);width:340px}
+.login-box h1{margin:0 0 4px;font-size:20px}
+.login-box p.sub{margin:0 0 22px;color:var(--text-3);font-size:13px}
+
+/* ---------- 布局 ---------- */
+#app{display:flex;min-height:100vh}
+.sidebar{width:206px;flex:0 0 206px;background:var(--panel);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.brand{padding:18px 18px 14px;font-weight:600;font-size:16px;display:flex;align-items:center;gap:8px}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent)}
+.nav{padding:6px 10px;overflow-y:auto;flex:1}
+.nav a{display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:8px;color:var(--text-2);
+  margin-bottom:2px;cursor:pointer;font-size:13.5px}
+.nav a:hover{background:var(--panel-2);color:var(--text)}
+.nav a.active{background:var(--accent-soft);color:var(--accent);font-weight:500}
+.nav a .ico{width:18px;text-align:center;font-size:15px}
+.side-foot{padding:12px;border-top:1px solid var(--line-2);font-size:12px;color:var(--text-3)}
+.main{flex:1;min-width:0;padding:22px 26px 60px}
+.page-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+.page-head h2{margin:0;font-size:19px}
+.page-head .desc{color:var(--text-3);font-size:12.5px;margin-top:2px}
+
+/* ---------- 卡片 / 表格 ---------- */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:16px}
+.card-head{padding:13px 16px;border-bottom:1px solid var(--line-2);font-weight:600;display:flex;
+  align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.card-body{padding:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:15px 16px;box-shadow:var(--shadow)}
+.stat .k{color:var(--text-3);font-size:12.5px}
+.stat .v{font-size:22px;font-weight:600;margin-top:5px;word-break:break-all}
+.stat .v small{font-size:13px;font-weight:400;color:var(--text-3)}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line-2);vertical-align:middle;font-size:13.5px}
+th{color:var(--text-2);font-weight:500;background:var(--panel-2);white-space:nowrap;font-size:12.5px}
+tbody tr:hover{background:#fcfdff}
+td.actions{white-space:nowrap}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
+.muted{color:var(--text-3)}
+.trunc{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle}
+
+/* ---------- 表单 ---------- */
+.field{margin-bottom:14px}
+.field label{display:block;font-size:13px;color:var(--text-2);margin-bottom:6px}
+.field .hint{font-size:12px;color:var(--text-3);margin-top:5px}
+input[type=text],input[type=password],input[type=number],select,textarea{
+  width:100%;padding:8px 11px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(47,111,237,.10)}
+textarea{min-height:96px;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.row>.field{flex:1;min-width:180px}
+.inline{display:flex;gap:8px;align-items:center}
+.chk{display:flex;align-items:center;gap:7px;font-size:13.5px;cursor:pointer}
+input[type=checkbox]{width:15px;height:15px;accent-color:var(--accent);cursor:pointer}
+
+/* ---------- 按钮 ---------- */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;border:1px solid var(--line);
+  background:#fff;color:var(--text);cursor:pointer;transition:.15s;white-space:nowrap;font-size:13.5px}
+.btn:hover{border-color:#cfd8e6;background:var(--panel-2)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:#2a63d6;border-color:#2a63d6}
+.btn.danger{color:var(--err);border-color:#f5c9c5}
+.btn.danger:hover{background:var(--err-soft)}
+.btn.sm{padding:4px 9px;font-size:12.5px;border-radius:6px}
+.btn.link{border:none;background:none;color:var(--accent);padding:4px 6px}
+.btn.link:hover{background:var(--accent-soft)}
+.btn-group{display:flex;gap:6px;flex-wrap:wrap}
+
+/* ---------- 徽标 ---------- */
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;background:var(--panel-2);
+  border:1px solid var(--line);color:var(--text-2)}
+.badge.ok{background:var(--ok-soft);border-color:#c3ead5;color:var(--ok)}
+.badge.err{background:var(--err-soft);border-color:#f5c9c5;color:var(--err)}
+.badge.warn{background:var(--warn-soft);border-color:#f6dfb8;color:var(--warn)}
+.badge.blue{background:var(--accent-soft);border-color:#c7daff;color:var(--accent)}
+.tw{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px}
+.tw.on{background:var(--ok)} .tw.off{background:#c9d1dd}
+
+/* ---------- 弹窗 ---------- */
+.mask{position:fixed;inset:0;background:rgba(16,24,40,.42);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px}
+.modal{background:var(--panel);border-radius:12px;width:100%;max-width:660px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(16,24,40,.22)}
+.modal.wide{max-width:860px}
+.modal-head{padding:15px 18px;border-bottom:1px solid var(--line-2);font-weight:600;display:flex;justify-content:space-between;align-items:center}
+.modal-body{padding:18px;overflow-y:auto;flex:1}
+.modal-foot{padding:13px 18px;border-top:1px solid var(--line-2);display:flex;justify-content:flex-end;gap:9px;flex-wrap:wrap}
+.x{cursor:pointer;color:var(--text-3);font-size:19px;line-height:1;border:none;background:none}
+
+/* ---------- 目录选择器 ---------- */
+.crumbs{display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-size:13px;margin-bottom:10px;min-height:26px}
+.crumbs span.c{cursor:pointer;color:var(--accent);padding:2px 6px;border-radius:5px}
+.crumbs span.c:hover{background:var(--accent-soft)}
+.crumbs span.sep{color:var(--text-3)}
+.picklist{border:1px solid var(--line);border-radius:8px;max-height:330px;overflow-y:auto}
+.pickrow{display:flex;align-items:center;gap:9px;padding:8px 12px;border-bottom:1px solid var(--line-2);cursor:pointer}
+.pickrow:hover{background:var(--panel-2)}
+.pickrow:last-child{border-bottom:none}
+.pickrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ---------- 日志 ---------- */
+.logbox{background:#fbfcfe;border:1px solid var(--line);border-radius:8px;padding:12px;max-height:420px;
+  overflow-y:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.75}
+.logbox .l{white-space:pre-wrap;word-break:break-all}
+.logbox .l.DEBUG{color:var(--text-3)}
+.logbox .l.INFO{color:var(--text)}
+.logbox .l.WARNING{color:var(--warn)}
+.logbox .l.ERROR{color:var(--err)}
+
+/* ---------- 其他 ---------- */
+.toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);background:#1f2329;color:#fff;
+  padding:9px 18px;border-radius:8px;font-size:13.5px;z-index:300;box-shadow:0 6px 20px rgba(0,0,0,.2);max-width:80vw}
+.toast.err{background:var(--err)} .toast.ok{background:var(--ok)}
+.empty{text-align:center;color:var(--text-3);padding:40px 16px;font-size:13.5px}
+code{background:var(--panel-2);border:1px solid var(--line-2);padding:1px 6px;border-radius:5px;font-size:12.5px}
+.bar{height:6px;background:var(--line-2);border-radius:6px;overflow:hidden;margin-top:6px}
+.bar>i{display:block;height:100%;background:var(--accent);border-radius:6px}
+@media(max-width:820px){
+  #app{flex-direction:column}
+  .sidebar{width:100%;flex:none;height:auto;position:static;flex-direction:row;overflow-x:auto}
+  .brand{display:none} .nav{display:flex;gap:4px;padding:8px}
+  .nav a{white-space:nowrap;margin:0} .side-foot{display:none}
+  .main{padding:16px}
+}
+</style>
+</head>
+<body>
+
+<!-- ============ 登录 ============ -->
+<div id="login">
+  <div class="login-box">
+    <h1>115SavePro</h1>
+    <p class="sub">115 网盘自动转存 · 离线下载 · QMediaSync 联动</p>
+    <div class="field"><label>用户名</label><input type="text" id="lg-user" value="admin" autocomplete="username"></div>
+    <div class="field"><label>密码</label><input type="password" id="lg-pass" autocomplete="current-password" placeholder="默认 zxcvbnm"></div>
+    <button class="btn primary" style="width:100%;justify-content:center" onclick="doLogin()">登录</button>
+  </div>
+</div>
+
+<!-- ============ 主界面 ============ -->
+<div id="app" class="hidden">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span>115SavePro</div>
+    <nav class="nav" id="nav">
+      <a data-view="dashboard" class="active"><span class="ico">▦</span>仪表盘</a>
+      <a data-view="users"><span class="ico">☺</span>账号管理</a>
+      <a data-view="tasks"><span class="ico">⇄</span>转存任务</a>
+      <a data-view="offline"><span class="ico">⤓</span>离线下载</a>
+      <a data-view="files"><span class="ico">▤</span>文件管理</a>
+      <a data-view="history"><span class="ico">☰</span>转存日志</a>
+      <a data-view="qms"><span class="ico">◈</span>连接 QMediaSync</a>
+      <a data-view="notify"><span class="ico">◔</span>通知设置</a>
+      <a data-view="settings"><span class="ico">⚙</span>系统设置</a>
+    </nav>
+    <div class="side-foot">
+      <div id="foot-user">—</div>
+      <div style="margin-top:6px"><a onclick="doLogout()" style="cursor:pointer">退出登录</a></div>
+    </div>
+  </aside>
+  <main class="main" id="main"></main>
+</div>
+
+<div id="modal-root"></div>
+<div id="toast-root"></div>
+
+<script>
+/* ============================================================
+   基础工具
+   ============================================================ */
+const $ = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function toast(msg, type=''){
+  const el = document.createElement('div');
+  el.className = 'toast ' + type; el.textContent = msg;
+  $('#toast-root').appendChild(el);
+  setTimeout(()=>{ el.style.transition='opacity .3s'; el.style.opacity=0; setTimeout(()=>el.remove(),300); }, 2600);
+}
+
+async function api(path, opts={}){
+  const o = { method: opts.method || 'GET', headers:{'Content-Type':'application/json'} };
+  if (opts.body !== undefined) o.body = JSON.stringify(opts.body);
+  const res = await fetch(path, o);
+  if (res.status === 401 && !path.includes('/api/auth/')){ showLogin(); throw new Error('未登录'); }
+  let data = {};
+  try { data = await res.json(); } catch(e){ data = {success:false, message:'响应解析失败'}; }
+  if (!data.success && data.message) throw new Error(data.message);
+  return data;
+}
+
+function modal(title, bodyHtml, footHtml='', cls=''){
+  const root = $('#modal-root');
+  const wrap = document.createElement('div');
+  wrap.className = 'mask';
+  wrap.innerHTML = `<div class="modal ${cls}">
+      <div class="modal-head"><span>${esc(title)}</span><button class="x" data-close>×</button></div>
+      <div class="modal-body">${bodyHtml}</div>
+      ${footHtml?`<div class="modal-foot">${footHtml}</div>`:''}
+    </div>`;
+  wrap.addEventListener('click', e => { if (e.target === wrap || e.target.hasAttribute('data-close')) wrap.remove(); });
+  root.appendChild(wrap);
+  return wrap;
+}
+
+const fmtSize = n => {
+  n = Number(n||0);
+  if (!n) return '0 B';
+  const u = ['B','KB','MB','GB','TB','PB']; let i = 0, v = n;
+  while (v >= 1024 && i < u.length-1){ v /= 1024; i++; }
+  return (i===0 ? v.toFixed(0) : v.toFixed(2)) + ' ' + u[i];
+};
+const fmtTime = t => t ? String(t).replace('T',' ').slice(0,19) : '—';
+
+/* ============================================================
+   登录
+   ============================================================ */
+function showLogin(){ $('#login').classList.remove('hidden'); $('#app').classList.add('hidden'); }
+function showApp(){ $('#login').classList.add('hidden'); $('#app').classList.remove('hidden'); }
+
+async function doLogin(){
+  const username = $('#lg-user').value.trim(), password = $('#lg-pass').value;
+  try{
+    await api('/api/auth/login', {method:'POST', body:{username, password}});
+    showApp(); $('#foot-user').textContent = username; switchView('dashboard');
+  }catch(e){ toast(e.message, 'err'); }
+}
+async function doLogout(){ try{ await api('/api/auth/logout', {method:'POST'}); }catch(e){} showLogin(); }
+
+$('#lg-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+/* ============================================================
+   路由
+   ============================================================ */
+const VIEWS = {};
+let curView = '';
+function switchView(name){
+  curView = name;
+  $$('#nav a').forEach(a => a.classList.toggle('active', a.dataset.view === name));
+  const fn = VIEWS[name];
+  if (fn) fn();
+}
+$('#nav').addEventListener('click', e => {
+  const a = e.target.closest('a[data-view]'); if (a) switchView(a.dataset.view);
+});
+
+/* ============================================================
+   仪表盘
+   ============================================================ */
+VIEWS.dashboard = async function(){
+  $('#main').innerHTML = `<div class="page-head"><div><h2>仪表盘</h2><div class="desc">账号状态 · 任务概览 · 定时计划</div></div>
+    <button class="btn" onclick="VIEWS.dashboard()">刷新</button></div>
+    <div id="dash-stats" class="grid"></div>
+    <div class="card"><div class="card-head">已启用任务</div><div id="dash-tasks"><div class="empty">加载中…</div></div></div>
+    <div class="card"><div class="card-head">定时计划</div><div id="dash-jobs"><div class="empty">加载中…</div></div></div>`;
+  try{
+    const [space, tasks, jobs, users] = await Promise.all([
+      api('/api/user/space').catch(()=>({data:{}})),
+      api('/api/tasks').catch(()=>({data:[]})),
+      api('/api/scheduler/jobs').catch(()=>({data:[]})),
+      api('/api/users').catch(()=>({data:{users:[]}})),
+    ]);
+    const sp = space.data || {}, ts = tasks.data || [], js = jobs.data || [];
+    const us = (users.data && users.data.users) || [];
+    const cur = us.find(u => u.current);
+    const enabled = ts.filter(t => t.enabled).length;
+    const running = ts.filter(t => t.running).length;
+    $('#dash-stats').innerHTML = [
+      statCard('当前账号', cur ? esc(cur.username) : '<span class="muted">未登录</span>', cur && cur.last_check_ok===false ? '<span class="badge err">异常</span>' : ''),
+      statCard('已用空间', sp.space_total ? `${esc(sp.space_used_text)} <small>/ ${esc(sp.space_total_text)}</small>` : '<span class="muted">—</span>',
+        sp.space_percent ? `<div class="bar"><i style="width:${Math.min(sp.space_percent,100)}%"></i></div><div class="muted" style="font-size:12px;margin-top:4px">${sp.space_percent}%</div>` : ''),
+      statCard('任务总数', `${ts.length} <small>个</small>`, `<div class="muted" style="font-size:12px;margin-top:4px">启用 ${enabled} · 运行中 ${running}</div>`),
+      statCard('定时计划', `${js.length} <small>条</small>`, js.length ? `<div class="muted" style="font-size:12px;margin-top:4px">最近：${esc(js[0].next_run || '—')}</div>` : ''),
+    ].join('');
+
+    $('#dash-tasks').innerHTML = enabled
+      ? table(['任务名','保存路径','定时','最近结果','状态'], ts.filter(t=>t.enabled).map(t => [
+          esc(t.name || t.url),
+          `<span class="trunc mono" title="${esc(t.save_dir)}">${esc(t.save_dir)}</span>`,
+          t.cron ? `<code>${esc(t.cron)}</code>` : '<span class="muted">跟随全局</span>',
+          `<span class="trunc" title="${esc(t.last_message)}">${esc(t.last_message || '—')}</span>`,
+          t.running ? '<span class="badge blue">执行中</span>' : (t.status==='failed' ? '<span class="badge err">上次失败</span>' : '<span class="badge ok">就绪</span>'),
+        ]))
+      : '<div class="empty">还没有启用的任务，去「转存任务」新建一个</div>';
+
+    $('#dash-jobs').innerHTML = js.length
+      ? table(['计划','下次执行','触发器'], js.map(j => [esc(j.name), esc(j.next_run||'—'), `<span class="mono muted">${esc(j.trigger)}</span>`]))
+      : '<div class="empty">没有注册任何定时计划</div>';
+  }catch(e){ $('#main').innerHTML += `<div class="empty">加载失败：${esc(e.message)}</div>`; }
+};
+function statCard(k, v, extra=''){ return `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${extra}</div>`; }
+function table(headers, rows, emptyMsg='暂无数据'){
+  if (!rows || !rows.length) return `<div class="empty">${emptyMsg}</div>`;
+  return `<div style="overflow-x:auto"><table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+/* ============================================================
+   账号管理
+   ============================================================ */
+VIEWS.users = async function(){
+  $('#main').innerHTML = `<div class="page-head"><div><h2>账号管理</h2>
+      <div class="desc">扫码登录 115 账号，支持多账号切换</div></div>
+    <div class="btn-group">
+      <button class="btn primary" onclick="qrLoginModal()">扫码登录 115</button>
+      <button class="btn" onclick="cookieLoginModal()">手动粘贴 Cookie</button>
+      <button class="btn" onclick="VIEWS.users()">刷新</button></div></div>
+    <div id="user-list"><div class="empty">加载中…</div></div>`;
+  try{
+    const r = await api('/api/users'); const us = r.data.users || [];
+    $('#user-list').innerHTML = `<div class="card"><div class="card-head">账号列表</div>
+      ${us.length ? table(['账号','UID','状态','添加时间','操作'], us.map(u => [
+        (u.current ? '<span class="badge blue">当前</span> ' : '') + esc(u.username) + (u.remark?` <span class="muted">(${esc(u.remark)})</span>`:''),
+        `<span class="mono muted">${esc(u.uid||'—')}</span>`,
+        u.last_check_ok === true ? `<span class="badge ok">正常</span>` : (u.last_check_ok === false ? '<span class="badge err">失效</span>' : '<span class="badge">未校验</span>'),
+        `<span class="muted">${esc(u.added_at||'—')}</span>`,
+        `<div class="btn-group">
+          <button class="btn sm" onclick="checkUser('${esc(u.username)}')">校验</button>
+          ${u.current ? '' : `<button class="btn sm" onclick="switchUser('${esc(u.username)}')">切换</button>`}
+          <button class="btn sm danger" onclick="delUser('${esc(u.username)}')">删除</button></div>`
+      ])) : '<div class="empty">还没有账号，点右上角「扫码登录 115」开始</div>'}</div>`;
+  }catch(e){ $('#user-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+};
+
+async function checkUser(name){
+  toast('正在校验…');
+  try{ const r = await api('/api/user/check', {method:'POST', body:{username:name}});
+    const d = r.data;
+    toast(`校验通过${d.nickname?'：'+d.nickname:''}（已用 ${d.space_used_text||'—'}）`, 'ok');
+    VIEWS.users();
+  }catch(e){ toast(e.message, 'err'); VIEWS.users(); }
+}
+async function switchUser(name){ try{ await api('/api/user/switch',{method:'POST',body:{username:name}}); toast('已切换','ok'); VIEWS.users(); }catch(e){ toast(e.message,'err'); } }
+async function delUser(name){
+  if (!confirm(`确认删除账号「${name}」？`)) return;
+  try{ await api('/api/user/delete',{method:'POST',body:{username:name}}); toast('已删除','ok'); VIEWS.users(); }catch(e){ toast(e.message,'err'); }
+}
+
+function qrLoginModal(){
+  const w = modal('扫码登录 115', `
+    <div style="display:flex;gap:20px;flex-wrap:wrap">
+      <div style="text-align:center">
+        <div id="qr-box" style="width:200px;height:200px;border:1px solid var(--line);border-radius:10px;
+          display:flex;align-items:center;justify-content:center;background:var(--panel-2)">
+          <span class="muted" style="font-size:13px">生成中…</span></div>
+        <div id="qr-status" class="muted" style="margin-top:10px;font-size:13px">正在获取二维码…</div>
+      </div>
+      <div style="flex:1;min-width:230px">
+        <div class="field"><label>登录设备</label><select id="qr-app"></select>
+          <div class="hint">扫码确认后，Cookie 会以该设备身份签发。不确定就保持默认。</div></div>
+        <div class="field"><label>账号备注名（可选）</label><input type="text" id="qr-name" placeholder="留空自动用 UID 命名"></div>
+        <div class="field"><label>备注（可选）</label><input type="text" id="qr-remark" placeholder="例如：主号 / 影视号"></div>
+        <div class="hint">用 <b>115 手机 App</b> 扫码 → 手机上点确认即可。</div>
+      </div>
+    </div>`, `<button class="btn" data-close>关闭</button>
+    <button class="btn primary" id="qr-confirm" disabled>保存账号</button>`);
+  let sid = null, timer = null, done = false;
+  (async () => {
+    try{
+      const apps = await api('/api/apps');
+      $('#qr-app', w).innerHTML = apps.data.map(a=>`<option value="${esc(a.value)}">${esc(a.label)}</option>`).join('');
+      const r = await api('/api/qr/start', {method:'POST', body:{app: $('#qr-app', w).value}});
+      sid = r.data.sid;
+      $('#qr-box', w).innerHTML = `<img src="${r.data.qrcode}" style="width:190px;height:190px">`;
+      $('#qr-status', w).textContent = '请用 115 手机 App 扫码';
+      timer = setInterval(async () => {
+        if (done) return;
+        try{
+          const p = await api('/api/qr/poll', {method:'POST', body:{sid}});
+          const d = p.data; $('#qr-status', w).textContent = d.message;
+          if (d.status === 1) $('#qr-status', w).style.color = 'var(--ok)';
+          if (d.done){
+            done = true; clearInterval(timer);
+            if (d.has_cookie){ $('#qr-confirm', w).disabled = false; $('#qr-status', w).textContent = '✅ 登录成功，点「保存账号」完成'; }
+            else { $('#qr-status', w).style.color='var(--err)'; }
+          }
+        }catch(e){ /* 轮询失败忽略 */ }
+      }, 2000);
+    }catch(e){ $('#qr-status', w).textContent = '获取二维码失败：' + e.message; $('#qr-status', w).style.color='var(--err)'; }
+  })();
+
+  w.addEventListener('click', async e => {
+    if (e.target.id === 'qr-confirm'){
+      try{
+        const r = await api('/api/qr/commit', {method:'POST', body:{sid, username: $('#qr-name', w).value.trim(), remark: $('#qr-remark', w).value.trim()}});
+        toast('账号已保存：' + r.data.username, 'ok'); clearInterval(timer); w.remove();
+        if (curView === 'users') VIEWS.users();
+      }catch(e){ toast(e.message, 'err'); }
+    }
+    if (e.target.hasAttribute('data-close')){ clearInterval(timer); if (sid) api('/api/qr/cancel',{method:'POST',body:{sid}}).catch(()=>{}); }
+  });
+}
+
+function cookieLoginModal(){
+  const w = modal('手动粘贴 Cookie', `
+    <div class="field"><label>账号名</label><input type="text" id="ck-name" placeholder="例如：主号"></div>
+    <div class="field"><label>Cookie</label><textarea id="ck-val" placeholder="UID=...; CID=...; SEID=...; KID=..."></textarea>
+      <div class="hint">浏览器登录 115 网页版 → F12 → 应用/存储 → Cookie → 复制 <b>UID / CID / SEID / KID</b> 四项（整条 Cookie 字符串粘贴即可）。</div></div>
+    <div class="field"><label>备注</label><input type="text" id="ck-remark"></div>`,
+    `<button class="btn" data-close>取消</button><button class="btn primary" id="ck-ok">保存</button>`);
+  w.addEventListener('click', async e => {
+    if (e.target.id === 'ck-ok'){
+      try{
+        await api('/api/user/add', {method:'POST', body:{username:$('#ck-name',w).value.trim(), cookies:$('#ck-val',w).value.trim(), remark:$('#ck-remark',w).value.trim()}});
+        toast('账号已保存','ok'); w.remove(); if (curView==='users') VIEWS.users();
+      }catch(err){ toast(err.message,'err'); }
+    }
+  });
+}
+
+/* ============================================================
+   转存任务
+   ============================================================ */
+VIEWS.tasks = async function(){
+  $('#main').innerHTML = `<div class="page-head"><div><h2>转存任务</h2>
+      <div class="desc">定时把 115 分享链接里的文件转存到指定目录，有新文件时联动 QMediaSync</div></div>
+    <div class="btn-group">
+      <button class="btn primary" onclick="taskEditModal()">新建任务</button>
+      <button class="btn" onclick="execAll()">全部执行</button>
+      <button class="btn" onclick="VIEWS.tasks()">刷新</button></div></div>
+    <div id="task-list"><div class="empty">加载中…</div></div>`;
+  try{
+    const r = await api('/api/tasks'); const ts = r.data || [];
+    $('#task-list').innerHTML = `<div class="card"><div class="card-head">任务列表（${ts.length}）</div>
+      ${ts.length ? table(['#','任务名','保存路径','定时','去重','状态','最近结果','操作'], ts.map(t => [
+        t.order,
+        `<span class="trunc" title="${esc(t.url)}">${esc(t.name || t.url)}</span>`,
+        t.compare_path ? `<span class="trunc mono" title="${esc(t.save_dir)} → ${esc(t.compare_path)}">${esc(t.save_dir)}<br><span class="muted">对比 ${esc(t.compare_path)}</span></span>`
+                       : `<span class="trunc mono" title="${esc(t.save_dir)}">${esc(t.save_dir)}</span>`,
+        t.cron ? `<code>${esc(t.cron)}</code>` : '<span class="muted">跟随全局</span>',
+        {name:'文件名',name_size:'文件名+大小',sha1:'SHA1'}[t.dedupe_mode] || t.dedupe_mode,
+        t.enabled ? '<span class="badge ok">启用</span>' : '<span class="badge">停用</span>',
+        `<span class="trunc" title="${esc(t.last_message)}">${esc(t.last_message || '—')}</span>`,
+        `<div class="btn-group">
+          <button class="btn sm primary" onclick="execTask('${t.task_uid}')">执行</button>
+          <button class="btn sm" onclick="taskLogModal('${t.task_uid}','${esc(t.name||'')}')">日志</button>
+          <button class="btn sm" onclick="taskEditModal('${t.task_uid}')">编辑</button>
+          <button class="btn sm" onclick="toggleTask('${t.task_uid}',${!t.enabled})">${t.enabled?'停用':'启用'}</button>
+          <button class="btn sm danger" onclick="delTask('${t.task_uid}')">删除</button></div>`
+      ])) : '<div class="empty">还没有任务，点「新建任务」开始</div>'}</div>`;
+  }catch(e){ $('#task-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+};
+
+async function execTask(uid){
+  try{ await api('/api/task/execute',{method:'POST',body:{task_uid:uid}}); toast('已开始执行','ok'); taskLogModal(uid,'实时日志',true); }catch(e){ toast(e.message,'err'); }
+}
+async function execAll(){ try{ const r = await api('/api/tasks/execute-all',{method:'POST',body:{}}); toast(r.data.message,'ok'); setTimeout(()=>VIEWS.tasks(),1200); }catch(e){ toast(e.message,'err'); } }
+async function toggleTask(uid, en){ try{ await api('/api/task/toggle',{method:'POST',body:{task_uid:uid, enabled:en}}); VIEWS.tasks(); }catch(e){ toast(e.message,'err'); } }
+async function delTask(uid){ if(!confirm('确认删除该任务？')) return;
+  try{ await api('/api/task/delete',{method:'POST',body:{task_uid:uid}}); toast('已删除','ok'); VIEWS.tasks(); }catch(e){ toast(e.message,'err'); } }
+
+async function taskLogModal(uid, title, live=false){
+  const w = modal('执行日志 · ' + (title||''), `<div class="logbox" id="logbox"><div class="l muted">加载中…</div></div>`,
+    `<button class="btn" data-close>关闭</button><button class="btn" onclick="VIEWS.tasks()">返回列表</button>`);
+  async function load(){
+    try{
+      const r = await api('/api/task/status/' + uid);
+      const d = r.data;
+      const box = $('#logbox', w); if (!box) return false;
+      if (!d.exists){
+        const h = await api('/api/task/history/' + uid);
+        const rec = (h.data||[])[0];
+        box.innerHTML = rec ? renderHistory(rec) : '<div class="l muted">暂无记录</div>';
+        return false;
+      }
+      box.innerHTML = (d.log||[]).map(l => {
+        const m = l.match(/^\[(\w+)\]\s*([\s\S]*)$/);
+        const lv = m ? m[1] : 'INFO', txt = m ? m[2] : l;
+        return `<div class="l ${lv}">${esc(txt)}</div>`;
+      }).join('') + (d.finished ? '' : '<div class="l muted">执行中…</div>');
+      box.scrollTop = box.scrollHeight;
+      return !d.finished;
+    }catch(e){ return false; }
+  }
+  const keep = await load();
+  let t = null;
+  if (keep) t = setInterval(async ()=>{ if (!(await load())){ clearInterval(t); VIEWS.tasks(); } }, 1500);
+  w.addEventListener('click', e => { if (e.target.hasAttribute('data-close') && t) clearInterval(t); });
+}
+function renderHistory(rec){
+  const lines = [];
+  lines.push(`<div class="l"><b>任务</b>：${esc(rec.task_name||'')}</div>`);
+  lines.push(`<div class="l"><b>时间</b>：${esc(rec.start_time)} → ${esc(rec.end_time)}</div>`);
+  lines.push(`<div class="l"><b>结果</b>：${rec.success?'✅ 成功':'❌ 失败'} ${esc(rec.message||'')}</div>`);
+  lines.push(`<div class="l"><b>转存数</b>：${rec.file_count||0}</div>`);
+  if ((rec.skipped||[]).length) lines.push(`<div class="l"><b>去重跳过</b>：${(rec.skipped||[]).slice(0,40).map(esc).join('、')}</div>`);
+  if ((rec.new_items||[]).length) lines.push(`<div class="l"><b>新增</b>：${(rec.new_items||[]).map(i=>esc(i.name)).join('、')}</div>`);
+  if (rec.qms_result) lines.push(`<div class="l"><b>QMS</b>：${esc(rec.qms_result)}</div>`);
+  lines.push('<div class="l">─────────</div>');
+  (rec.log||[]).forEach(l => {
+    const m = l.match(/^\[(\w+)\]\s*([\s\S]*)$/);
+    lines.push(`<div class="l ${m?m[1]:'INFO'}">${esc(m?m[2]:l)}</div>`);
+  });
+  return lines.join('');
+}
+
+/* --------- 任务编辑 --------- */
+let taskCache = [];
+let tfSelection = [];   // 选中的分享内文件夹 id
+let tfPwdCache = {url:'', pwd:''};
+
+async function taskEditModal(uid){
+  const r = await api('/api/tasks'); taskCache = r.data || [];
+  const t = uid ? taskCache.find(x => x.task_uid === uid) : null;
+  if (uid && !t){ toast('任务不存在','err'); return; }
+  tfSelection = t ? (t.transfer_file_ids || []).slice() : [];
+  $('#modal-root').innerHTML = '';
+
+  const w = modal(t ? '编辑任务' : '新建任务', `
+    <div class="row">
+      <div class="field" style="flex:2"><label>分享链接 <span class="muted">（必填，支持带提取码的完整链接）</span></label>
+        <input type="text" id="f-url" value="${esc(t?t.url:'')}" placeholder="https://115.com/s/xxxxx?password=abcd"></div>
+      <div class="field" style="flex:1"><label>提取码</label><input type="text" id="f-pwd" value="${esc(t?t.pwd:'')}" placeholder="链接里已带可留空"></div>
+    </div>
+    <div class="row">
+      <div class="field" style="flex:1"><label>任务名称</label><input type="text" id="f-name" value="${esc(t?t.name:'')}" placeholder="留空自动抓取分享标题"></div>
+      <div class="field" style="flex:1"><label>分类（可选）</label><input type="text" id="f-cat" value="${esc(t?t.category:'')}"></div>
+    </div>
+    <div class="field"><label>保存路径 <span class="muted">（必填，115 网盘目录，不存在会自动创建）</span></label>
+      <div class="inline"><input type="text" id="f-save" value="${esc(t?t.save_dir:'/')}" placeholder="/我的影视/剧集">
+        <button class="btn" onclick="pickDir('f-save')">选择</button></div></div>
+    <div class="field"><label>对比路径 <span class="muted">（可选，去重比对目录；留空=用保存路径）</span></label>
+      <div class="inline"><input type="text" id="f-cmp" value="${esc(t?t.compare_path:'')}" placeholder="留空则与保存路径比对">
+        <button class="btn" onclick="pickDir('f-cmp')">选择</button></div></div>
+    <div class="row">
+      <div class="field"><label>去重模式</label>
+        <select id="f-dedupe">
+          <option value="name">按文件名</option>
+          <option value="name_size">按文件名 + 大小</option>
+          <option value="sha1">按 SHA1（最准，115 秒传一致）</option>
+        </select></div>
+      <div class="field"><label>定时规则（cron）</label><input type="text" id="f-cron" value="${esc(t?t.cron:'')}" placeholder="留空则跟随全局定时"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>文件过滤正则（可选）</label><input type="text" id="f-rx" value="${esc(t?t.regex_pattern:'')}" placeholder=".*\\.(mp4|mkv)$">
+        <div class="hint">只转存匹配的文件名；目录不受影响</div></div>
+      <div class="field"><label>正则替换（可选）</label><input type="text" id="f-rp" value="${esc(t?t.regex_replace:'')}" placeholder="留空则不重命名"></div>
+    </div>
+    <div class="field"><label>排除文件清单 <span class="muted">（每行一个文件名，命中则跳过）</span></label>
+      <textarea id="f-ex" style="min-height:64px">${esc((t?(t.exclude_files||[]):[]).join('\n'))}</textarea></div>
+    <div class="field"><label>指定转存文件夹 <span class="muted">（不选=整条分享全部转存）</span></label>
+      <div class="inline">
+        <input type="text" id="f-tf" readonly value="${tfSelection.length?('已选 '+tfSelection.length+' 项'):'未选择（转存全部）'}" style="background:var(--panel-2)">
+        <button class="btn" onclick="sharePickModal()">选择</button>
+        <button class="btn" onclick="tfSelection=[];$('#f-tf').value='未选择（转存全部）'">清空</button>
+      </div></div>
+    <div class="field"><label class="chk"><input type="checkbox" id="f-en" ${(!t||t.enabled)?'checked':''}> 启用该任务</label></div>
+  `, `<button class="btn" data-close>取消</button><button class="btn primary" id="f-ok">${t?'保存修改':'创建任务'}</button>`);
+
+  $('#f-dedupe', w).value = t ? (t.dedupe_mode||'name') : 'name';
+
+  w.addEventListener('click', async e => {
+    if (e.target.id !== 'f-ok') return;
+    const body = {
+      url: $('#f-url',w).value.trim(), pwd: $('#f-pwd',w).value.trim(),
+      name: $('#f-name',w).value.trim(), category: $('#f-cat',w).value.trim(),
+      save_dir: $('#f-save',w).value.trim(), compare_path: $('#f-cmp',w).value.trim(),
+      dedupe_mode: $('#f-dedupe',w).value, cron: $('#f-cron',w).value.trim(),
+      regex_pattern: $('#f-rx',w).value.trim(), regex_replace: $('#f-rp',w).value,
+      exclude_files: $('#f-ex',w).value.split('\n').map(s=>s.trim()).filter(Boolean),
+      transfer_file_ids: tfSelection,
+      enabled: $('#f-en',w).checked,
+    };
+    try{
+      if (t) await api('/api/task/update', {method:'POST', body:{task_uid:t.task_uid, data:body}});
+      else await api('/api/task/add', {method:'POST', body});
+      toast(t?'已保存':'任务已创建','ok'); w.remove(); VIEWS.tasks();
+    }catch(err){ toast(err.message,'err'); }
+  });
+}
+
+/* --------- 目录选择器 --------- */
+function pickDir(inputId){
+  let stack = [{cid:0,name:'根目录'}];
+  const w = modal('选择 115 目录', `
+    <div class="crumbs" id="crumbs"></div>
+    <div class="picklist" id="plist"><div class="empty">加载中…</div></div>`,
+    `<button class="btn" data-close>取消</button>
+     <button class="btn primary" id="pd-ok">选择当前目录</button>`, 'wide');
+  async function load(){
+    $('#crumbs',w).innerHTML = stack.map((s,i)=>`<span class="c" data-i="${i}">${esc(s.name)}</span>`).join('<span class="sep">/</span>');
+    try{
+      const r = await api('/api/dir/list?cid=' + stack[stack.length-1].cid);
+      const items = r.data.items || [];
+      $('#plist',w).innerHTML = items.length ? items.map(i =>
+        `<div class="pickrow" data-cid="${i.id}" data-name="${esc(i.name)}"><span>📁</span><span class="nm">${esc(i.name)}</span><span class="muted">›</span></div>`
+      ).join('') : '<div class="empty">该目录下没有子目录</div>';
+    }catch(e){ $('#plist',w).innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+  w.addEventListener('click', e => {
+    const c = e.target.closest('.c');
+    if (c){ stack = stack.slice(0, Number(c.dataset.i)+1); load(); return; }
+    const row = e.target.closest('.pickrow');
+    if (row){ stack.push({cid:Number(row.dataset.cid), name: row.dataset.name}); load(); return; }
+    if (e.target.id === 'pd-ok'){
+      const path = '/' + stack.slice(1).map(s=>s.name).join('/');
+      const val = stack.length === 1 ? '/' : path;
+      const el = document.getElementById(inputId); if (el) el.value = val;
+      w.remove();
+    }
+  });
+  load();
+}
+
+/* --------- 分享文件夹选择器 --------- */
+function sharePickModal(){
+  const url = $('#f-url') ? $('#f-url').value.trim() : '';
+  const pwd = $('#f-pwd') ? $('#f-pwd').value.trim() : '';
+  if (!url){ toast('先填分享链接再选择文件夹','err'); return; }
+  let stack = [{cid:0,name:'分享根目录'}];
+  const w = modal('选择要转存的文件夹/文件', `
+    <div class="muted" style="margin-bottom:8px;font-size:12.5px">勾选后只转存选中项；不勾选任何项 = 整条分享全部转存。可跨层级多选。</div>
+    <div class="crumbs" id="scrumbs"></div>
+    <div class="picklist" id="splist"><div class="empty">加载中…</div></div>
+    <div class="muted" style="margin-top:8px" id="ssel"></div>`,
+    `<button class="btn" data-close>取消</button><button class="btn primary" id="sp-ok">确定</button>`, 'wide');
+  async function load(){
+    $('#scrumbs',w).innerHTML = stack.map((s,i)=>`<span class="c" data-i="${i}">${esc(s.name)}</span>`).join('<span class="sep">/</span>');
+    $('#ssel',w).textContent = tfSelection.length ? ('已选 ' + tfSelection.length + ' 项') : '未选择（转存全部）';
+    try{
+      const r = await api('/api/share/browse', {method:'POST', body:{url, pwd, cid: stack[stack.length-1].cid}});
+      const items = r.data.items || [];
+      $('#splist',w).innerHTML = items.length ? items.map(i => {
+        const checked = tfSelection.includes(String(i.id));
+        return `<div class="pickrow">
+          <input type="checkbox" data-id="${i.id}" ${checked?'checked':''}>
+          <span>${i.is_dir?'📁':'📄'}</span>
+          <span class="nm">${esc(i.name)}</span>
+          <span class="muted">${i.is_dir?'':fmtSize(i.size)}</span>
+          ${i.is_dir?`<button class="btn sm" data-enter="${i.id}" data-name="${esc(i.name)}">进入</button>`:''}
+        </div>`;
+      }).join('') : '<div class="empty">该层级没有内容</div>';
+    }catch(e){ $('#splist',w).innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+  w.addEventListener('click', e => {
+    const c = e.target.closest('.c');
+    if (c){ stack = stack.slice(0, Number(c.dataset.i)+1); load(); return; }
+    const en = e.target.closest('[data-enter]');
+    if (en){ stack.push({cid:Number(en.dataset.enter), name: en.dataset.name}); load(); return; }
+    if (e.target.id === 'sp-ok'){ toast(tfSelection.length?('已选 '+tfSelection.length+' 项'):'将转存整条分享','ok'); w.remove(); return; }
+  });
+  w.addEventListener('change', e => {
+    const cb = e.target.closest('input[type=checkbox][data-id]'); if (!cb) return;
+    const id = String(cb.dataset.id);
+    if (cb.checked){ if (!tfSelection.includes(id)) tfSelection.push(id); }
+    else tfSelection = tfSelection.filter(x => x !== id);
+    $('#ssel',w).textContent = tfSelection.length ? ('已选 ' + tfSelection.length + ' 项') : '未选择（转存全部）';
+    const inp = $('#f-tf'); if (inp) inp.value = tfSelection.length ? ('已选 '+tfSelection.length+' 项') : '未选择（转存全部）';
+  });
+  load();
+}
+
+/* ============================================================
+   离线下载
+   ============================================================ */
+VIEWS.offline = async function(){
+  $('#main').innerHTML = `<div class="page-head"><div><h2>离线下载</h2>
+      <div class="desc">把磁力 / ed2k / HTTP 链接交给 115 云端下载，完成后可自动触发 QMediaSync</div></div>
+    <div class="btn-group"><button class="btn primary" onclick="offlineAdd()">新建下载</button>
+      <button class="btn" onclick="VIEWS.offline()">刷新</button></div></div>
+    <div id="off-list"><div class="empty">加载中…</div></div>`;
+  try{
+    const r = await api('/api/offline/list?page=1&page_size=100');
+    const items = r.data.items || [];
+    $('#off-list').innerHTML = `<div class="card"><div class="card-head">任务列表（${items.length}）</div>
+      ${items.length ? table(['名称','大小','进度','状态','添加时间','操作'], items.map(t => [
+        `<span class="trunc" title="${esc(t.name)}">${esc(t.name || t.info_hash)}</span>`,
+        fmtSize(t.size),
+        (t.percent!=null) ? `${t.percent}%<div class="bar"><i style="width:${Math.min(Number(t.percent)||0,100)}%"></i></div>` : '—',
+        statusBadge(t.status),
+        `<span class="muted">${esc(fmtTime(t.add_time))}</span>`,
+        `<div class="btn-group"><button class="btn sm danger" onclick="offlineDel('${esc(t.info_hash)}')">删除</button></div>`
+      ])) : '<div class="empty">还没有离线下载任务</div>'}</div>`;
+  }catch(e){ $('#off-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+};
+function statusBadge(s){
+  const m = {0:'<span class="badge">等待</span>',1:'<span class="badge blue">下载中</span>',2:'<span class="badge blue">下载中</span>',
+             3:'<span class="badge warn">暂停</span>',4:'<span class="badge ok">已完成</span>',9:'<span class="badge err">失败</span>',
+             11:'<span class="badge ok">已完成</span>',12:'<span class="badge blue">进行中</span>'};
+  return m[s] || `<span class="badge">状态 ${esc(s)}</span>`;
+}
+function offlineAdd(){
+  const w = modal('新建离线下载', `
+    <div class="field"><label>下载链接 <span class="muted">（每行一个，支持磁力 / ed2k / HTTP / HTTPS / FTP）</span></label>
+      <textarea id="of-urls" placeholder="magnet:?xt=urn:btih:...
+ed2k://|file|...
+https://example.com/file.zip"></textarea></div>
+    <div class="field"><label>保存目录（可选）</label>
+      <div class="inline"><input type="text" id="of-dir" placeholder="/我的影视/离线下载"><button class="btn" onclick="pickDir('of-dir')">选择</button></div>
+      <div class="hint">留空则用 115 账号自身的默认离线目录</div></div>`,
+    `<button class="btn" data-close>取消</button><button class="btn primary" id="of-ok">提交下载</button>`);
+  w.addEventListener('click', async e => {
+    if (e.target.id !== 'of-ok') return;
+    try{
+      const r = await api('/api/offline/add', {method:'POST', body:{urls:$('#of-urls',w).value, save_dir:$('#of-dir',w).value.trim()}});
+      toast('已提交 ' + r.data.submitted + ' 个链接','ok'); w.remove(); VIEWS.offline();
+    }catch(err){ toast(err.message,'err'); }
+  });
+}
+async function offlineDel(h){ if(!confirm('确认删除该离线任务？')) return;
+  try{ await api('/api/offline/delete',{method:'POST',body:{hashes:[h]}}); toast('已删除','ok'); VIEWS.offline(); }catch(e){ toast(e.message,'err'); } }
+
+/* ============================================================
+   文件管理
+   ============================================================ */
+let fileStack = [{cid:0,name:'根目录'}];
+let fileSel = new Set();
+VIEWS.files = async function(){
+  fileStack = [{cid:0,name:'根目录'}]; fileSel = new Set();
+  $('#main').innerHTML = `<div class="page-head"><div><h2>文件管理</h2>
+      <div class="desc">浏览 / 新建 / 重命名 / 移动 / 复制 / 删除 / 生成分享</div></div>
+    <div class="btn-group"><button class="btn" onclick="fileSearch()">搜索</button>
+      <button class="btn" onclick="fileMkdir()">新建文件夹</button>
+      <button class="btn" onclick="fileAct('move')">移动选中</button>
+      <button class="btn" onclick="fileAct('copy')">复制选中</button>
+      <button class="btn" onclick="fileAct('share')">生成分享</button>
+      <button class="btn danger" onclick="fileAct('delete')">删除选中</button></div></div>
+    <div class="card"><div class="card-head"><div class="crumbs" id="f-crumbs" style="margin:0"></div>
+      <span class="muted" id="f-sel"></span></div><div id="f-list"><div class="empty">加载中…</div></div></div>`;
+  loadFiles();
+};
+async function loadFiles(){
+  const cur = fileStack[fileStack.length-1];
+  $('#f-crumbs').innerHTML = fileStack.map((s,i)=>`<span class="c" data-i="${i}">${esc(s.name)}</span>`).join('<span class="sep">/</span>');
+  $('#f-sel').textContent = fileSel.size ? ('已选 ' + fileSel.size + ' 项') : '';
+  try{
+    const r = await api('/api/files/list?cid=' + cur.cid + '&limit=300');
+    const items = r.data.items || [];
+    $('#f-list').innerHTML = items.length ? table(['','名称','大小','修改时间','操作'], items.map(i => [
+      `<input type="checkbox" data-fid="${i.id}" ${fileSel.has(String(i.id))?'checked':''}>`,
+      i.is_dir ? `<span style="cursor:pointer" data-enter="${i.id}" data-name="${esc(i.name)}">📁 <b>${esc(i.name)}</b></span>`
+               : `📄 ${esc(i.name)}`,
+      i.is_dir ? '—' : fmtSize(i.size),
+      `<span class="muted">${i.mtime ? fmtTime(new Date(i.mtime*1000).toISOString()) : '—'}</span>`,
+      `<div class="btn-group"><button class="btn sm" onclick="fileRename(${i.id},'${esc(i.name).replace(/'/g,"\\'")}')">重命名</button></div>`
+    ])) : '<div class="empty">空目录</div>';
+  }catch(e){ $('#f-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+document.addEventListener('click', e => {
+  const c = e.target.closest('#f-crumbs .c');
+  if (c){ fileStack = fileStack.slice(0, Number(c.dataset.i)+1); fileSel = new Set(); loadFiles(); return; }
+  const en = e.target.closest('[data-enter]');
+  if (en && $('#f-list')){ fileStack.push({cid:Number(en.dataset.enter), name:en.dataset.name}); fileSel = new Set(); loadFiles(); }
+});
+document.addEventListener('change', e => {
+  const cb = e.target.closest('#f-list input[type=checkbox][data-fid]'); if (!cb) return;
+  const id = String(cb.dataset.fid);
+  if (cb.checked) fileSel.add(id); else fileSel.delete(id);
+  $('#f-sel') && ($('#f-sel').textContent = fileSel.size ? ('已选 ' + fileSel.size + ' 项') : '');
+});
+function fileMkdir(){
+  const name = prompt('新建文件夹名称：'); if (!name) return;
+  api('/api/files/mkdir',{method:'POST',body:{cid:fileStack[fileStack.length-1].cid, name}})
+    .then(()=>{ toast('已创建','ok'); loadFiles(); }).catch(e=>toast(e.message,'err'));
+}
+function fileRename(fid, old){
+  const name = prompt('新名称：', old); if (!name || name === old) return;
+  api('/api/files/rename',{method:'POST',body:{fid, name}})
+    .then(()=>{ toast('已重命名','ok'); loadFiles(); }).catch(e=>toast(e.message,'err'));
+}
+function fileAct(kind){
+  const fids = Array.from(fileSel).map(Number);
+  if (!fids.length){ toast('请先勾选文件','err'); return; }
+  if (kind === 'delete'){
+    if (!confirm(`确认删除选中的 ${fids.length} 项？`)) return;
+    api('/api/files/delete',{method:'POST',body:{fids}}).then(()=>{ toast('已删除','ok'); fileSel=new Set(); loadFiles(); }).catch(e=>toast(e.message,'err'));
+    return;
+  }
+  if (kind === 'share'){
+    api('/api/files/share',{method:'POST',body:{fids}}).then(r=>{
+      const url = r.data.share_url || '（未返回链接）';
+      modal('分享已创建', `<div class="field"><label>分享链接</label>
+        <div class="inline"><input type="text" value="${esc(url)}" readonly><button class="btn" onclick="navigator.clipboard.writeText('${esc(url)}');toast('已复制','ok')">复制</button></div></div>`);
+    }).catch(e=>toast(e.message,'err'));
+    return;
+  }
+  // move / copy 需要选目标目录
+  let stack = [{cid:0,name:'根目录'}];
+  const w = modal(kind==='move'?'移动到…':'复制到…', `<div class="crumbs" id="mc"></div>
+    <div class="picklist" id="ml"><div class="empty">加载中…</div></div>`,
+    `<button class="btn" data-close>取消</button><button class="btn primary" id="mok">确定</button>`);
+  async function load(){
+    $('#mc',w).innerHTML = stack.map((s,i)=>`<span class="c" data-i="${i}">${esc(s.name)}</span>`).join('<span class="sep">/</span>');
+    try{
+      const r = await api('/api/dir/list?cid=' + stack[stack.length-1].cid);
+      const items = r.data.items || [];
+      $('#ml',w).innerHTML = items.length ? items.map(i=>`<div class="pickrow" data-cid="${i.id}" data-name="${esc(i.name)}"><span>📁</span><span class="nm">${esc(i.name)}</span><span class="muted">›</span></div>`).join('') : '<div class="empty">没有子目录</div>';
+    }catch(e){ $('#ml',w).innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+  w.addEventListener('click', async e => {
+    const c = e.target.closest('.c'); if (c){ stack = stack.slice(0,Number(c.dataset.i)+1); load(); return; }
+    const row = e.target.closest('.pickrow'); if (row){ stack.push({cid:Number(row.dataset.cid), name:row.dataset.name}); load(); return; }
+    if (e.target.id === 'mok'){
+      const target_cid = stack[stack.length-1].cid;
+      try{
+        await api(kind==='move'?'/api/files/move':'/api/files/copy',{method:'POST',body:{fids, target_cid}});
+        toast('操作成功','ok'); w.remove(); fileSel = new Set(); loadFiles();
+      }catch(err){ toast(err.message,'err'); }
+    }
+  });
+  load();
+}
+function fileSearch(){
+  const kw = prompt('搜索关键词：'); if (!kw) return;
+  api('/api/files/search',{method:'POST',body:{keyword:kw}}).then(r=>{
+    const items = r.data || [];
+    modal('搜索结果：' + kw, items.length ? table(['名称','大小'], items.map(i=>[esc(i.name), i.is_dir?'—':fmtSize(i.size)])) : '<div class="empty">没有结果</div>');
+  }).catch(e=>toast(e.message,'err'));
+}
+
+/* ============================================================
+   转存日志
+   ============================================================ */
+VIEWS.history = async function(){
+  $('#main').innerHTML = `<div class="page-head"><div><h2>转存日志</h2><div class="desc">每次执行都会留档，每任务保留最近 10 次</div></div>
+    <button class="btn" onclick="VIEWS.history()">刷新</button></div>
+    <div id="his-list"><div class="empty">加载中…</div></div>`;
+  try{
+    const r = await api('/api/history?limit=200');
+    const recs = r.data || [];
+    $('#his-list').innerHTML = `<div class="card"><div class="card-head">执行记录（${recs.length}）</div>
+      ${recs.length ? table(['任务','开始','结束','结果','转存数','QMS','详情'], recs.map((rec,i) => [
+        esc(rec.task_name || ''),
+        `<span class="muted">${esc(fmtTime(rec.start_time))}</span>`,
+        `<span class="muted">${esc(fmtTime(rec.end_time))}</span>`,
+        rec.success ? '<span class="badge ok">成功</span>' : '<span class="badge err">失败</span>',
+        rec.file_count || 0,
+        rec.qms_result ? `<span class="trunc" title="${esc(rec.qms_result)}">${esc(rec.qms_result)}</span>` : '<span class="muted">—</span>',
+        `<button class="btn sm" onclick="hisDetail(${i})">查看</button>`
+      ])) : '<div class="empty">还没有执行记录</div>'}</div>`;
+    window.__his = recs;
+  }catch(e){ $('#his-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+};
+function hisDetail(i){
+  const rec = (window.__his||[])[i]; if (!rec) return;
+  modal('执行详情 · ' + (rec.task_name||''), `<div class="logbox">${renderHistory(rec)}</div>`, `<button class="btn" data-close>关闭</button>`, 'wide');
+}
+
+/* ============================================================
+   连接 QMediaSync
+   ============================================================ */
+VIEWS.qms = async function(){
+  $('#main').innerHTML = `<div class="page-head"><div><h2>连接 QMediaSync</h2>
+      <div class="desc">转存/离线下载完成后，自动触发 QMS 刮削任务生成 strm 并整理分类</div></div>
+    <div class="btn-group"><button class="btn" onclick="qmsTriggerAll()">立即触发全部</button>
+      <button class="btn" onclick="VIEWS.qms()">刷新</button></div></div>
+    <div class="card"><div class="card-head">连接设置</div><div class="card-body" id="qms-cfg">加载中…</div></div>
+    <div class="card"><div class="card-head">连接列表（手动绑定）
+      <button class="btn sm primary" onclick="qmsLinkAdd()">创建连接</button></div>
+      <div id="qms-links"></div></div>`;
+  try{
+    const r = await api('/api/qms/config'); const c = r.data.config || {};
+    $('#qms-cfg').innerHTML = `
+      <div class="row">
+        <div class="field"><label>地址</label><input type="text" id="q-host" value="${esc(c.host||'')}" placeholder="192.168.31.35 或 http://ip:port"></div>
+        <div class="field" style="max-width:130px"><label>端口</label><input type="text" id="q-port" value="${esc(c.port||12333)}"></div>
+        <div class="field" style="max-width:150px"><label>协议</label><select id="q-scheme">
+          <option value="http" ${c.scheme==='http'?'selected':''}>http</option>
+          <option value="https" ${c.scheme==='https'?'selected':''}>https</option></select></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>鉴权方式</label><select id="q-auth">
+          <option value="api_key" ${c.auth_mode==='api_key'?'selected':''}>API Key（推荐）</option>
+          <option value="password" ${c.auth_mode==='password'?'selected':''}>账号密码</option></select></div>
+        <div class="field"><label>API Key ${c.has_api_key?'<span class="badge ok">已保存</span>':''}</label>
+          <input type="password" id="q-key" placeholder="${c.has_api_key?'留空表示不修改':'QMS 系统设置 → API 密钥 → 创建'}"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>用户名</label><input type="text" id="q-user" value="${esc(c.username||'')}"></div>
+        <div class="field"><label>密码 ${c.has_password?'<span class="badge ok">已保存</span>':''}</label>
+          <input type="password" id="q-pass" placeholder="${c.has_password?'留空表示不修改':''}"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label class="chk"><input type="checkbox" id="q-en" ${c.enabled?'checked':''}> 启用 QMS 联动</label></div>
+        <div class="field"><label class="chk"><input type="checkbox" id="q-auto" ${c.auto_trigger!==false?'checked':''}> 转存到新文件后自动触发</label></div>
+        <div class="field" style="max-width:190px"><label>触发前延时（秒）</label><input type="text" id="q-delay" value="${esc(c.delay_seconds||0)}"></div>
+      </div>
+      <div class="muted" style="font-size:12.5px;margin-bottom:12px">
+        最近触发：${esc(r.data.last_trigger_at||'—')} ${r.data.last_trigger_task?('· '+esc(r.data.last_trigger_task)):''}
+        ${r.data.last_trigger_result?('· '+esc(r.data.last_trigger_result)):''}</div>
+      <div class="btn-group">
+        <button class="btn primary" onclick="qmsSave()">保存配置</button>
+        <button class="btn" onclick="qmsTest()">测试连接</button>
+        <button class="btn" onclick="qmsPathes()">查看刮削任务</button>
+      </div>`;
+    renderQmsLinks(r.data.links || []);
+  }catch(e){ $('#qms-cfg').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+};
+function renderQmsLinks(links){
+  $('#qms-links').innerHTML = links.length ? table(['绑定对象','QMS 刮削','刮削目录','状态','操作'], links.map(l => [
+    l.scope === 'offline' ? '<span class="badge warn">离线下载完成后</span>'
+                          : `<span class="badge blue">任务</span> ${esc(l.task_name || l.task_uid)}`,
+    `#${esc(l.qms_id)} ${l.qms_media_type?`<span class="badge">${esc(l.qms_media_type)}</span>`:''}`,
+    `<span class="trunc mono" title="${esc(l.qms_path)}">${esc(l.qms_path||'—')}</span>`,
+    l.enabled ? '<span class="tw on"></span>启用' : '<span class="tw off"></span>停用',
+    `<div class="btn-group">
+      <button class="btn sm" onclick="qmsTrigger('${l.id}')">触发</button>
+      <button class="btn sm" onclick="qmsLogs('${l.id}','${esc(l.task_name||l.qms_id)}')">日志</button>
+      <button class="btn sm" onclick="qmsToggle('${l.id}')">${l.enabled?'停用':'启用'}</button>
+      <button class="btn sm danger" onclick="qmsLinkDel('${l.id}')">删除</button></div>`
+  ])) : '<div class="empty">还没有绑定。点「创建连接」把转存任务或离线下载关联到一个 QMS 刮削目录</div>';
+}
+function qmsForm(){
+  return { scheme:$('#q-scheme').value, host:$('#q-host').value.trim(), port:$('#q-port').value.trim(),
+           auth_mode:$('#q-auth').value, api_key:$('#q-key').value, username:$('#q-user').value.trim(),
+           password:$('#q-pass').value, enabled:$('#q-en').checked, auto_trigger:$('#q-auto').checked,
+           delay_seconds:Number($('#q-delay').value||0) };
+}
+async function qmsSave(){ try{ await api('/api/qms/config/save',{method:'POST',body:qmsForm()}); toast('已保存','ok'); VIEWS.qms(); }catch(e){ toast(e.message,'err'); } }
+async function qmsTest(){
+  const w = modal('连接测试中…','<div class="empty">正在连接 QMediaSync…</div>');
+  try{ const r = await api('/api/qms/test',{method:'POST',body:qmsForm()}); w.remove();
+    modal('连接成功', table(['项','值'],[['API 地址',esc(r.data.base)],['登录用户',esc(r.data.username||'—')]]));
+  }catch(e){ w.remove(); toast(e.message,'err'); }
+}
+async function qmsPathes(){
+  const w = modal('QMS 刮削任务','<div class="empty">加载中…</div>','','wide');
+  try{
+    const r = await api('/api/qms/pathes',{method:'POST',body:qmsForm()});
+    const items = r.data || [];
+    $('.modal-body', w).innerHTML = items.length ? table(['#','媒体类型','源目录','刮削方式','定时'], items.map(i=>[
+      esc(i.id), esc(i.media_type||'—'), `<span class="mono">${esc(i.source_path||'')}</span>`,
+      esc(i.scrape_type||'—'), i.enable_cron?`<code>${esc(i.cron_expression)}</code>`:'<span class="muted">未开启</span>'
+    ])) : '<div class="empty">QMS 里还没有刮削目录</div>';
+  }catch(e){ $('.modal-body', w).innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+async function qmsLinkAdd(){
+  let pathes = [];
+  try{ const r = await api('/api/qms/pathes',{method:'POST',body:qmsForm()}); pathes = r.data || []; }
+  catch(e){ toast('先配置并测试 QMS 连接：' + e.message,'err'); return; }
+  if (!pathes.length){ toast('QMS 里没有刮削目录','err'); return; }
+  const tasks = (await api('/api/tasks')).data || [];
+  const w = modal('创建连接', `
+    <div class="field"><label>绑定对象</label><select id="ql-scope">
+      <option value="task">某个转存任务（转存到新文件后触发）</option>
+      <option value="offline">离线下载完成（任一下载完成都触发）</option></select></div>
+    <div class="field" id="ql-task-wrap"><label>选择转存任务</label><select id="ql-task">
+      ${tasks.map(t=>`<option value="${esc(t.task_uid)}" data-name="${esc(t.name||t.url)}">${esc(t.name||t.url)} → ${esc(t.save_dir)}</option>`).join('') || '<option value="">（还没有转存任务）</option>'}
+    </select></div>
+    <div class="field"><label>选择 QMS 刮削任务</label><select id="ql-qms">
+      ${pathes.map(p=>`<option value="${esc(p.id)}" data-path="${esc(p.source_path)}" data-media="${esc(p.media_type)}">#${esc(p.id)} ${esc(p.media_type)} · ${esc(p.source_path)}</option>`).join('')}
+    </select></div>
+    <div class="hint">提示：QMS 的「源目录」应当是 115 目录挂载到本机后的实际路径（例如通过 CloudDrive2 挂载）。</div>`,
+    `<button class="btn" data-close>取消</button><button class="btn primary" id="ql-ok">创建</button>`);
+  $('#ql-scope',w).addEventListener('change', e => { $('#ql-task-wrap',w).style.display = e.target.value === 'task' ? '' : 'none'; });
+  w.addEventListener('click', async e => {
+    if (e.target.id !== 'ql-ok') return;
+    const scope = $('#ql-scope',w).value;
+    const sel = $('#ql-qms',w).selectedOptions[0];
+    const tsel = $('#ql-task',w).selectedOptions[0];
+    try{
+      await api('/api/qms/link/add',{method:'POST',body:{
+        scope, qms_id: Number(sel.value), qms_path: sel.dataset.path, qms_media_type: sel.dataset.media,
+        task_uid: scope==='task' ? (tsel?tsel.value:'') : '',
+        task_name: scope==='task' ? (tsel?tsel.dataset.name:'') : '离线下载',
+      }});
+      toast('连接已创建','ok'); w.remove(); VIEWS.qms();
+    }catch(err){ toast(err.message,'err'); }
+  });
+}
+async function qmsLinkDel(id){ if(!confirm('确认删除该连接？')) return;
+  try{ await api('/api/qms/link/delete',{method:'POST',body:{id}}); VIEWS.qms(); }catch(e){ toast(e.message,'err'); } }
+async function qmsToggle(id){ try{ await api('/api/qms/link/toggle',{method:'POST',body:{id}}); VIEWS.qms(); }catch(e){ toast(e.message,'err'); } }
+async function qmsTrigger(id){ try{ const r=await api('/api/qms/trigger',{method:'POST',body:{id}}); toast('已触发 #'+r.data.id,'ok'); }catch(e){ toast(e.message,'err'); } }
+async function qmsTriggerAll(){ try{ const r=await api('/api/qms/trigger-all',{method:'POST'}); toast(r.data.summary||'已触发','ok'); }catch(e){ toast(e.message,'err'); } }
+async function qmsLogs(id, name){
+  try{
+    const r = await api('/api/qms/logs?id=' + id);
+    const items = r.data || [];
+    modal('触发日志 · ' + name, items.length ? table(['时间','来源','结果','说明'], items.map(l=>[
+      esc(fmtTime(l.trigger_at)), esc(l.source), l.success?'<span class="badge ok">成功</span>':'<span class="badge err">失败</span>',
+      esc(l.message)
+    ])) : '<div class="empty">还没有触发记录</div>');
+  }catch(e){ toast(e.message,'err'); }
+}
+
+/* ============================================================
+   通知设置
+   ============================================================ */
+VIEWS.notify = async function(){
+  $('#main').innerHTML = `<div class="page-head"><div><h2>通知设置</h2>
+      <div class="desc">转存完成 / 空间告警 / 离线下载完成时推送</div></div>
+    <div class="btn-group"><button class="btn" onclick="notifyTest()">发送测试</button>
+      <button class="btn" onclick="VIEWS.notify()">刷新</button></div></div>
+    <div id="nt-box"><div class="empty">加载中…</div></div>`;
+  try{
+    const r = await api('/api/config'); const cfg = r.data || {};
+    const nt = cfg.notify || {}, df = nt.direct_fields || {};
+    const fields = cfg.notify_fields || [];
+    $('#nt-box').innerHTML = `<div class="card"><div class="card-head">通用</div><div class="card-body">
+      <div class="row">
+        <div class="field"><label class="chk"><input type="checkbox" id="nt-en" ${nt.enabled?'checked':''}> 启用通知</label></div>
+        <div class="field" style="max-width:220px"><label>合并延迟（秒）</label><input type="number" id="nt-delay" value="${esc(nt.notification_delay||30)}">
+          <div class="hint">多个任务短时间跑完，合并成一条发出</div></div>
+      </div></div></div>
+      <div class="card"><div class="card-head">渠道配置 <span class="muted" style="font-weight:400;font-size:12.5px">留空的渠道不会启用</span></div>
+      <div class="card-body"><div class="row">${fields.map(f => `
+        <div class="field" style="min-width:260px"><label>${esc(f.label)}</label>
+          <input type="text" data-nf="${esc(f.key)}" value="${esc(df[f.key]||'')}" placeholder="${esc(f.hint||'')}"></div>`).join('')}</div>
+      <div class="btn-group"><button class="btn primary" onclick="notifySave()">保存</button>
+        <button class="btn" onclick="notifyTest()">发送测试通知</button></div></div></div>`;
+  }catch(e){ $('#nt-box').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+};
+function notifyFields(){
+  const out = {}; $$('[data-nf]').forEach(i => out[i.dataset.nf] = i.value.trim()); return out;
+}
+async function notifySave(){
+  try{ await api('/api/config/update',{method:'POST',body:{notify:{enabled:$('#nt-en').checked,
+      notification_delay:Number($('#nt-delay').value||30), direct_fields:notifyFields()}}});
+    toast('已保存','ok');
+  }catch(e){ toast(e.message,'err'); }
+}
+async function notifyTest(){
+  try{ const r = await api('/api/notify/test',{method:'POST',body:{direct_fields:notifyFields()}});
+    const res = r.data.results || {};
+    const keys = Object.keys(res);
+    if (!keys.length) toast('没有配置任何通知渠道','err');
+    else toast('已尝试发送：' + keys.map(k=>k+'='+res[k]).join('，'), keys.every(k=>res[k]==='ok')?'ok':'err');
+  }catch(e){ toast(e.message,'err'); }
+}
+
+/* ============================================================
+   系统设置
+   ============================================================ */
+VIEWS.settings = async function(){
+  $('#main').innerHTML = `<div class="page-head"><div><h2>系统设置</h2><div class="desc">全局定时 · 空间告警 · 离线巡检 · 登录密码</div></div>
+    <button class="btn" onclick="VIEWS.settings()">刷新</button></div><div id="st-box"><div class="empty">加载中…</div></div>`;
+  try{
+    const r = await api('/api/config'); const c = r.data || {};
+    const cron = c.cron || {}, qa = c.quota_alert || {}, off = c.offline || {}, au = c.auth || {};
+    $('#st-box').innerHTML = `
+      <div class="card"><div class="card-head">全局定时</div><div class="card-body">
+        <div class="field"><label>全局 cron 表达式 <span class="muted">（每行一个，应用于「没有单独定时」的任务）</span></label>
+          <textarea id="st-cron" style="min-height:80px">${esc((cron.default_schedule||[]).join('\n'))}</textarea>
+          <div class="hint">示例：<code>0 10 * * *</code> 每天 10 点 ｜ <code>0 */6 * * *</code> 每 6 小时 ｜ <code>*/30 * * * *</code> 每 30 分钟</div></div>
+        <button class="btn primary" onclick="settingsSave()">保存</button></div></div>
+      <div class="card"><div class="card-head">空间告警</div><div class="card-body">
+        <div class="row">
+          <div class="field" style="max-width:200px"><label class="chk"><input type="checkbox" id="st-qa-en" ${qa.enabled?'checked':''}> 启用</label></div>
+          <div class="field" style="max-width:200px"><label>阈值（%）</label><input type="number" id="st-qa-p" value="${esc(qa.threshold_percent||90)}"></div>
+          <div class="field" style="max-width:240px"><label>检查 cron</label><input type="text" id="st-qa-c" value="${esc(qa.check_schedule||'0 0 * * *')}"></div>
+        </div><button class="btn primary" onclick="settingsSave()">保存</button></div></div>
+      <div class="card"><div class="card-head">离线下载巡检</div><div class="card-body">
+        <div class="row">
+          <div class="field" style="max-width:300px"><label class="chk"><input type="checkbox" id="st-of-en" ${off.auto_trigger_qms!==false?'checked':''}> 离线下载完成后自动触发 QMS</label></div>
+          <div class="field" style="max-width:240px"><label>巡检 cron</label><input type="text" id="st-of-c" value="${esc(off.watch_schedule||'*/5 * * * *')}"></div>
+        </div><button class="btn primary" onclick="settingsSave()">保存</button></div></div>
+      <div class="card"><div class="card-head">登录密码</div><div class="card-body">
+        <div class="row">
+          <div class="field"><label>当前用户名</label><input type="text" value="${esc(au.username||'admin')}" readonly style="background:var(--panel-2)"></div>
+          <div class="field"><label>原密码</label><input type="password" id="st-op"></div>
+          <div class="field"><label>新密码</label><input type="password" id="st-np"></div>
+        </div><button class="btn primary" onclick="changePwd()">修改密码</button></div></div>`;
+  }catch(e){ $('#st-box').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+};
+async function settingsSave(){
+  try{
+    await api('/api/config/update',{method:'POST',body:{
+      cron:{default_schedule:$('#st-cron').value.split('\n').map(s=>s.trim()).filter(Boolean)},
+      quota_alert:{enabled:$('#st-qa-en').checked, threshold_percent:Number($('#st-qa-p').value||90), check_schedule:$('#st-qa-c').value.trim()},
+      offline:{auto_trigger_qms:$('#st-of-en').checked, watch_schedule:$('#st-of-c').value.trim()},
+    }});
+    toast('已保存并重载定时计划','ok');
+  }catch(e){ toast(e.message,'err'); }
+}
+async function changePwd(){
+  try{ await api('/api/auth/password',{method:'POST',body:{old_password:$('#st-op').value, new_password:$('#st-np').value}});
+    toast('密码已修改','ok'); $('#st-op').value=''; $('#st-np').value='';
+  }catch(e){ toast(e.message,'err'); }
+}
+
+/* ============================================================
+   启动
+   ============================================================ */
+(async function init(){
+  try{
+    const r = await api('/api/auth/check');
+    if (r.data && r.data.logged_in){ showApp(); $('#foot-user').textContent = 'admin'; switchView('dashboard'); }
+    else showLogin();
+  }catch(e){ showLogin(); }
+})();
+</script>
+</body>
+</html>
