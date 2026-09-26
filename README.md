@@ -2,15 +2,30 @@
 
 **115 网盘自动转存系统 · 离线下载 · QMediaSync 联动**
 
+[![CI](https://github.com/xiaoming677/115savepro/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaoming677/115savepro/actions/workflows/ci.yml)
+[![Build and Push Docker Image](https://github.com/xiaoming677/115savepro/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/xiaoming677/115savepro/actions/workflows/docker-publish.yml)
+![Image Size](https://img.shields.io/badge/image-ghcr.io-blue)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+
 把 [xinyuLo/bdsavepro](https://github.com/xinyuLo/bdsavepro)（百度网盘版）的思路搬到 115 网盘上：  
 定时把 115 分享链接里的文件转存到自己的目录，转存到新文件后**自动通知 QMediaSync 刮削生成 strm 并整理分类**；  
 同时把 115 的**离线下载**能力（磁力 / ed2k / HTTP）也接了进来。
+
+## 快速开始（一行命令）
+
+```bash
+mkdir -p config log && docker compose up -d
+```
+
+访问 `http://你的NAS IP:5000`，默认账号 **admin** / 密码 **zxcvbnm**。
+更新：`docker compose pull && docker compose up -d`
 
 - 后端：Flask + APScheduler + SQLite
 - 网盘 SDK：[p115client](https://github.com/ChenyangGao/p115client)（ChenyangGao，MIT），  
   `requirements.txt` 里**锁定到实测通过的版本** `0.0.9.6.5.1`，保证构建可复现
 - 前端：**零构建单页**（一个 HTML，不需要 npm / Node 构建）
 - 登录 115：**扫码登录**（也可手动粘贴 Cookie）
+- 需要 **Python ≥ 3.12**（`p115client` 硬性要求）
 
 ---
 
@@ -51,27 +66,31 @@
 
 ### 方式一：docker compose（推荐）
 
+镜像已发布，**匿名可拉取**，不需要登录：
+
 ```bash
 mkdir -p config log
-# 把 docker-compose.yml 放到当前目录，并把 image 改成你的镜像地址
-docker compose up -d --build
+# 把 docker-compose.yml 放到当前目录，直接启动
+docker compose up -d
 ```
 
-### 方式一·补：从 Docker Hub 直接拉（更新最省事）
+访问 `http://你的NAS IP:5000`，默认账号 **admin** / 密码 **zxcvbnm**（登录后请立刻在「系统设置」改掉）。
 
-镜像由 GitHub Actions 自动构建推送，你只需要改 `docker-compose.yml` 里的 `image`：
-
-```yaml
-image: 你的DockerHub用户名/115savepro:latest
-```
-
-然后：
+### 更新到最新版
 
 ```bash
 docker compose pull && docker compose up -d
 ```
 
-**以后更新就重复这一条命令**，不用重新构建、不用动 `config/`（数据都在挂载卷里）。
+**以后更新就重复这一条命令**。数据都在挂载卷里，升级镜像不会丢数据。
+
+### 可用的镜像地址
+
+| 来源 | 地址 | 需要登录 |
+|---|---|---|
+| **GHCR**（默认，零配置） | `ghcr.io/xiaoming677/115savepro:latest` | 否，公开可拉 |
+| Docker Hub | `你的用户名/115savepro:latest` | 需先在仓库配好 Secrets，见[发布与更新](#发布与更新维护者看这里) |
+| 本地构建 | `115savepro:latest` | 否 |
 
 也可以不用 compose，直接跑：
 
@@ -81,10 +100,10 @@ docker run -d --name 115savepro --restart unless-stopped \
   -v $(pwd)/config:/app/config \
   -v $(pwd)/log:/app/log \
   -e TZ=Asia/Shanghai \
-  你的DockerHub用户名/115savepro:latest
+  ghcr.io/xiaoming677/115savepro:latest
 ```
 
-### 方式二：docker run（本地构建）
+### 方式二：本地构建
 
 ```bash
 mkdir -p config log
@@ -310,7 +329,25 @@ python web_app.py          # 默认 0.0.0.0:5000，可用 PORT / HOST 环境变�
 | 推送到 `main` | `latest`、`sha-xxxxxx` |
 | 推 `v1.2.0` 这个 tag | `1.2.0`、`1.2`、`latest` |
 
-### 首次配置（只做一次）
+### 镜像推到哪
+
+| 目标 | 是否需要配置 | 说明 |
+|---|---|---|
+| **GHCR**<br>`ghcr.io/<owner>/115savepro` | **不需要** | 用仓库自带的 `GITHUB_TOKEN`，开箱即用。首次发布后包默认是**私有**的，想公开给别人拉需要手动改包可见性（见下） |
+| **Docker Hub**<br>`<用户名>/115savepro` | 需要两个 Secret | 见下方「配置 Docker Hub」 |
+
+工作流会先探测 Secrets：**没配就自动只推 GHCR，不会报错**（会在日志里给出提示）。
+
+### 把 GHCR 包设为公开（可选）
+
+如果你的仓库是公开的，但别人拉不到镜像，多半是因为 GHCR 包默认私有：
+
+1. 打开 `https://github.com/users/xiaoming677/packages/container/115savepro/settings`
+2. 页面底部 **Danger Zone** → **Change visibility** → 选 **Public** → 输入包名确认
+
+> 自己用（`docker login ghcr.io` 或本机已登录）不需要这步。
+
+### 配置 Docker Hub（可选，只做一次）
 
 1. **在 Docker Hub 建一个 Access Token**
    Docker Hub → 右上角头像 → Account settings → Personal access tokens → New Access Token，
@@ -324,9 +361,10 @@ python web_app.py          # 默认 0.0.0.0:5000，可用 PORT / HOST 环境变�
    | `DOCKERHUB_USERNAME` | 你的 Docker Hub 用户名 |
    | `DOCKERHUB_TOKEN` | 上一步复制的 Token |
 
-3. **触发一次构建**
+3. **重新触发一次构建**
    Actions 页面 → 左侧选 `Build and Push Docker Image` → Run workflow。
-   构建成功后，Docker Hub 上就能看到 `你的用户名/115savepro:latest` 了。
+   成功后推送目标会变成 **Docker Hub + GHCR**，Docker Hub 上就能看到
+   `你的用户名/115savepro:latest` 了。
 
 ### 以后怎么发新版
 
