@@ -360,6 +360,33 @@ async function delUser(name){
   try{ await api('/api/user/delete',{method:'POST',body:{username:name}}); toast('已删除','ok'); VIEWS.users(); }catch(e){ toast(e.message,'err'); }
 }
 
+let lastDiag = null;
+
+function renderQrDebug(w, d){
+  const box = $('#qr-debug', w);
+  if (!box) return;
+  const rows = d.debug || [];
+  box.innerHTML = rows.length
+    ? rows.map(r => `<div class="l"><span class="muted">${esc(r.t)}</span> <b>${esc(r.step)}</b>  ${esc(r.detail)}</div>`).join('')
+    : '<div class="l muted">暂无</div>';
+  box.scrollTop = box.scrollHeight;
+}
+
+function qrDiagText(){
+  const d = lastDiag;
+  if (!d) return '（还没有诊断信息，请先生成二维码并轮询）';
+  const lines = [];
+  lines.push('=== 115SavePro 扫码登录诊断 ===');
+  lines.push('时间: ' + new Date().toISOString());
+  lines.push('登录设备(app): ' + (d.app || ''));
+  lines.push('当前状态: status=' + d.status + '  ' + (d.message || ''));
+  lines.push('错误: ' + (d.error || '（无）'));
+  lines.push('');
+  lines.push('--- 各步原始响应 ---');
+  (d.debug || []).forEach(r => lines.push(`[${r.t}] ${r.step}: ${r.detail}`));
+  return lines.join('\n');
+}
+
 function qrLoginModal(){
   const w = modal('扫码登录 115', `
     <div style="display:flex;gap:20px;flex-wrap:wrap">
@@ -369,21 +396,37 @@ function qrLoginModal(){
           <span class="muted" style="font-size:13px">生成中…</span></div>
         <div id="qr-status" class="muted" style="margin-top:10px;font-size:13px">正在获取二维码…</div>
       </div>
-      <div style="flex:1;min-width:230px">
+      <div style="flex:1;min-width:250px">
         <div class="field"><label>登录设备</label><select id="qr-app"></select>
-          <div class="hint">扫码确认后，Cookie 会以该设备身份签发。不确定就保持默认。</div></div>
+          <div class="hint">扫码后 Cookie 以该设备身份签发。<b>如果报「参数错误」，换一个设备重新生成二维码再试</b>（推荐顺序：支付宝小程序 → 安卓端 → 网页端）。</div></div>
         <div class="field"><label>账号备注名（可选）</label><input type="text" id="qr-name" placeholder="留空自动用 UID 命名"></div>
         <div class="field"><label>备注（可选）</label><input type="text" id="qr-remark" placeholder="例如：主号 / 影视号"></div>
-        <div class="hint">用 <b>115 手机 App</b> 扫码 → 手机上点确认即可。</div>
+        <div class="hint">用 <b>115 手机 App</b> 扫码 → 手机上点「确认登录」。</div>
       </div>
+    </div>
+    <div id="qr-err" class="hidden" style="margin-top:12px;padding:9px 11px;border-radius:8px;
+      background:var(--err-soft);color:var(--err);font-size:12.5px;line-height:1.6"></div>
+    <div class="field" style="margin-top:12px">
+      <label>诊断信息 <span class="muted">（失败时点下方「复制诊断」把内容发我）</span></label>
+      <div class="logbox" id="qr-debug" style="max-height:160px;font-size:11.5px"><div class="l muted">暂无</div></div>
     </div>`, `<button class="btn" id="qr-selftest">接口自检</button>
+    <button class="btn" id="qr-regen">重新生成二维码</button>
+    <button class="btn" id="qr-copydiag">复制诊断</button>
     <button class="btn" data-close>关闭</button>
     <button class="btn primary" id="qr-confirm" disabled>保存账号</button>`);
   let sid = null, timer = null, done = false;
-  (async () => {
+  $('#qr-app', w).addEventListener('change', () => startQr());
+
+  async function startQr(){
+    if (timer) clearInterval(timer);
+    done = false; lastDiag = null;
+    $('#qr-confirm', w).disabled = true;
+    $('#qr-err', w).classList.add('hidden');
+    $('#qr-debug', w).innerHTML = '<div class="l muted">暂无</div>';
+    $('#qr-status', w).style.color = '';
+    $('#qr-status', w).textContent = '正在获取二维码…';
+    $('#qr-box', w).innerHTML = '<span class="muted" style="font-size:13px">生成中…</span>';
     try{
-      const apps = await api('/api/apps');
-      $('#qr-app', w).innerHTML = apps.data.map(a=>`<option value="${esc(a.value)}">${esc(a.label)}</option>`).join('');
       const r = await api('/api/qr/start', {method:'POST', body:{app: $('#qr-app', w).value}});
       sid = r.data.sid;
       $('#qr-box', w).innerHTML = `<img src="${r.data.qrcode}" style="width:190px;height:190px">`;
@@ -392,19 +435,55 @@ function qrLoginModal(){
         if (done) return;
         try{
           const p = await api('/api/qr/poll', {method:'POST', body:{sid}});
-          const d = p.data; $('#qr-status', w).textContent = d.message;
+          const d = p.data; lastDiag = d;
+          $('#qr-status', w).textContent = d.message;
           if (d.status === 1) $('#qr-status', w).style.color = 'var(--ok)';
+          renderQrDebug(w, d);
           if (d.done){
             done = true; clearInterval(timer);
-            if (d.has_cookie){ $('#qr-confirm', w).disabled = false; $('#qr-status', w).textContent = '✅ 登录成功，点「保存账号」完成'; }
-            else { $('#qr-status', w).style.color='var(--err)'; }
+            if (d.has_cookie){
+              $('#qr-confirm', w).disabled = false;
+              $('#qr-status', w).textContent = '登录成功，点「保存账号」完成';
+              $('#qr-status', w).style.color = 'var(--ok)';
+            } else {
+              $('#qr-status', w).style.color = 'var(--err)';
+              const eb = $('#qr-err', w);
+              eb.classList.remove('hidden');
+              eb.innerHTML = '<b>登录失败</b>：' + esc(d.error || d.message)
+                + '<br>可尝试：① 在「登录设备」换一个再点「重新生成二维码」　② 换网络 / 关掉代理（115 风控）　③ 用「手动粘贴 Cookie」';
+            }
           }
         }catch(e){ /* 轮询失败忽略 */ }
       }, 2000);
-    }catch(e){ $('#qr-status', w).textContent = '获取二维码失败：' + e.message; $('#qr-status', w).style.color='var(--err)'; }
+    }catch(e){
+      $('#qr-status', w).textContent = '获取二维码失败：' + e.message;
+      $('#qr-status', w).style.color = 'var(--err)';
+    }
+  }
+
+  (async () => {
+    try{
+      const apps = await api('/api/apps');
+      $('#qr-app', w).innerHTML = apps.data.map(a=>`<option value="${esc(a.value)}">${esc(a.label)}</option>`).join('');
+      startQr();
+    }catch(e){
+      $('#qr-status', w).textContent = '加载设备列表失败：' + e.message;
+      $('#qr-status', w).style.color = 'var(--err)';
+    }
   })();
 
   w.addEventListener('click', async e => {
+    if (e.target.id === 'qr-regen'){ startQr(); return; }
+    if (e.target.id === 'qr-copydiag'){
+      const txt = qrDiagText();
+      try{
+        await navigator.clipboard.writeText(txt);
+        toast('诊断信息已复制，粘贴发给我即可', 'ok');
+      }catch(err){
+        modal('诊断信息（手动复制）', `<div class="logbox" style="max-height:400px">${esc(txt)}</div>`, '<button class="btn" data-close>关闭</button>', 'wide');
+      }
+      return;
+    }
     if (e.target.id === 'qr-selftest'){
       const app = $('#qr-app', w).value;
       try{

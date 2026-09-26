@@ -31,7 +31,7 @@ LOG_DIR = os.path.join(BASE_DIR, 'log')
 SECRET_FILE = os.path.join(CONFIG_DIR, 'secret.key')
 
 # 版本号：更新镜像后可在页面左下角 / GET /api/version 核对
-APP_VERSION = '1.1.1'
+APP_VERSION = '1.2.0'
 
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'static'), static_url_path='/static')
 app.config['JSON_AS_ASCII'] = False
@@ -199,6 +199,8 @@ def api_qr_poll():
         'done': sess.done,
         'has_cookie': bool(sess.cookies),
         'error': sess.error,
+        'app': sess.app,
+        'debug': sess.debug,
     })
 
 

@@ -33,17 +33,27 @@ CONFIG_PATH = os.path.join(CONFIG_DIR, 'config.json')
 TEMPLATE_PATH = os.path.join(CONFIG_DIR, 'config.template.json')
 
 # 允许绑定 cookie 的设备（扫码后即以此设备身份登录）
+#
+# 顺序 = 推荐尝试顺序，第一个是默认值。
+# 为什么默认用 web：这是 115 官方网页版登录所用的命名空间，而我们的场景
+# 恰好就是"电脑屏幕上显示二维码 → 用 115 App 扫码确认"，语义完全一致。
+# 支付宝/微信小程序端的命名空间（alipaymini/wechatmini）签发的小程序二维码，
+# 用 115 主 App 扫会出现"能扫出声音但确认失败/参数错误"的情况。
 AVAILABLE_APPS = [
-    ('alipaymini', '115生活_支付宝小程序（推荐）'),
-    ('web', '115生活_网页端'),
+    ('web', '115生活_网页端（推荐，与官网登录一致）'),
     ('android', '115生活_安卓端'),
+    ('115android', '115_安卓端'),
     ('ios', '115生活_苹果端'),
-    ('qandroid', '115管理_安卓端'),
+    ('ipad', '115生活_苹果平板端'),
     ('tv', '115生活_安卓电视端'),
+    ('alipaymini', '115生活_支付宝小程序'),
+    ('wechatmini', '115生活_微信小程序端'),
+    ('qandroid', '115管理_安卓端'),
     ('os_windows', '115生活_Windows端'),
     ('os_linux', '115生活_Linux端'),
+    ('harmony', '115_鸿蒙端'),
 ]
-DEFAULT_APP = 'alipaymini'
+DEFAULT_APP = 'web'
 
 
 class StorageError(Exception):
@@ -64,6 +74,17 @@ class QrSession:
         self.cookies = ''
         self.done = False
         self.error = ''
+        self.debug = []          # 诊断日志：每一步的原始响应（排查「参数错误」用）
+        self._last_status_raw = None
+
+    def dbg(self, step, detail):
+        if len(self.debug) < 80:
+            self.debug.append({
+                't': time.strftime('%H:%M:%S'),
+                'step': step,
+                'detail': detail if isinstance(detail, str) else json.dumps(
+                    detail, ensure_ascii=False)[:600],
+            })
 
 
 _qr_sessions = {}
@@ -90,21 +111,27 @@ def qr_new_session(app=DEFAULT_APP):
       去换 cookie，就会 app 不匹配。）
     """
     app = (app or DEFAULT_APP).strip() or DEFAULT_APP
-    resp = P115Client.login_qrcode_token(app=app)
+    sess = QrSession()
+    sess.app = app
+    try:
+        resp = P115Client.login_qrcode_token(app=app)
+    except Exception as e:  # noqa: BLE001
+        raise StorageError('获取二维码失败：%s' % e)
+    sess.dbg('1.取 token(app=%s)' % app, resp)
     if not resp or resp.get('state') != 1:
         raise StorageError('获取二维码失败：%s' % _tok_msg(resp))
     data = dict(resp.get('data') or {})
     sid = data.get('uid') or ''
     if not sid:
         raise StorageError('获取二维码失败：接口未返回 uid')
-    sess = QrSession()
     sess.uid = sid
-    sess.app = app
     sess.token = {k: data.get(k) for k in ('uid', 'time', 'sign')}
     sess.created_at = time.time()
     try:
         sess.qrcode_png = P115Client.login_qrcode(sid, app=app)
+        sess.dbg('2.取二维码图(app=%s)' % app, 'PNG %d 字节' % len(sess.qrcode_png))
     except Exception as e:  # noqa: BLE001
+        sess.dbg('2.取二维码图', '失败：%s' % e)
         raise StorageError('生成二维码图片失败：%s' % e)
     with _qr_lock:
         _qr_sessions[sid] = sess
@@ -115,7 +142,7 @@ def qr_new_session(app=DEFAULT_APP):
 
 
 def qr_poll(sid):
-    """轮询扫码状态。返回 QrSession（含 cookies / error / message）"""
+    """轮询扫码状态。返回 QrSession（含 cookies / error / message / debug）"""
     with _qr_lock:
         sess = _qr_sessions.get(sid)
     if not sess:
@@ -127,57 +154,77 @@ def qr_poll(sid):
         sess.message = '二维码已过期'
         sess.done = True
         return sess
+
+    # ---- 第 3 步：查扫码状态 ----
     try:
         resp = P115Client.login_qrcode_scan_status(dict(sess.token))
     except Exception as e:  # noqa: BLE001
         sess.message = '查询状态失败：%s' % e
+        sess.dbg('3.查状态', '异常：%s' % e)
         return sess
-    # 注意：外层 state 是"接口调用是否成功"，扫码进度在 data.status
-    # 115 在「等待扫码」阶段可能返回 data:{}，此时按 0 处理
-    status = ((resp or {}).get('data') or {}).get('status')
-    if status is None:
-        status = 0
-    try:
-        sess.status = int(status)
-    except (TypeError, ValueError):
-        sess.status = 0
 
-    if sess.status == 0:
-        sess.message = '等待扫码'
-    elif sess.status == 1:
-        sess.message = '已扫码，请在手机上确认登录'
-    elif sess.status == 2:
+    # 外层 state 是"接口调用是否成功"，扫码进度在 data.status
+    # 115 在「等待扫码」阶段可能返回 data:{}，此时按 0 处理
+    raw_status = ((resp or {}).get('data') or {}).get('status')
+    status = 0 if raw_status is None else raw_status
+    try:
+        status = int(status)
+    except (TypeError, ValueError):
+        status = 0
+
+    # 只在状态变化或出错时记日志，避免刷屏
+    if raw_status != sess._last_status_raw:
+        sess.dbg('3.查状态', resp)
+        sess._last_status_raw = raw_status
+
+    # 接口层面报错（state != 1）时**必须让用户看见**，不能默默当"还在等待"
+    if isinstance(resp, dict) and resp.get('state') != 1 and not sess.cookies:
+        sess.error = _tok_msg(resp)
+        sess.message = '查询扫码状态被拒：%s' % sess.error
+
+    sess.status = status
+    if status == 0:
+        if not sess.error:
+            sess.message = '等待扫码'
+    elif status == 1:
+        sess.message = '已扫码，请在手机上点「确认登录」'
+    elif status == 2:
         sess.message = '已确认，正在获取登录凭据…'
+
+        # ---- 第 4 步：换取 cookie ----
         try:
             result = P115Client.login_qrcode_scan_result(sess.uid, app=sess.app)
-            data = (result or {}).get('data') or {}
-            cookie = data.get('cookie') or ''
-            if not cookie:
-                # 115 常见失败：参数错误 / 老乡验证失败 / IP登录异常
-                detail = _tok_msg(result)
-                hint = ''
-                if '参数' in detail:
-                    hint = '；多半是登录设备（app）与二维码不匹配，换个「登录设备」再试'
-                elif 'IP' in detail or '异常' in detail:
-                    hint = '；115 风控拦截了本机 IP，可尝试换网络/挂代理，或改用「手动粘贴 Cookie」'
-                sess.error = detail
-                sess.message = '获取登录凭据失败：%s%s' % (detail, hint)
-            else:
-                sess.cookies = cookie
-                sess.message = '登录成功'
-            sess.done = True
         except Exception as e:  # noqa: BLE001
             sess.error = str(e)
+            sess.dbg('4.换取凭据', '异常：%s' % e)
             sess.message = '获取登录凭据异常：%s' % e
             sess.done = True
-    elif sess.status == -1:
+            return sess
+
+        sess.dbg('4.换取凭据(app=%s)' % sess.app, result)
+        data = (result or {}).get('data') or {}
+        cookie = data.get('cookie') or ''
+        if not cookie:
+            detail = _tok_msg(result)
+            sess.error = detail
+            hint = ''
+            if '参数' in detail:
+                hint = '｜多半是登录设备与二维码不匹配，换个「登录设备」重新生成二维码再试'
+            elif 'IP' in detail or '老乡' in detail:
+                hint = '｜115 风控拦截了本机 IP，换网络/挂代理，或改用「手动粘贴 Cookie」'
+            sess.message = '获取登录凭据失败：%s%s' % (detail, hint)
+        else:
+            sess.cookies = cookie
+            sess.message = '登录成功'
+        sess.done = True
+    elif status == -1:
         sess.message = '二维码已过期，请重新获取'
         sess.done = True
-    elif sess.status == -2:
+    elif status == -2:
         sess.message = '已取消登录'
         sess.done = True
     else:
-        sess.message = '未知状态 %s' % sess.status
+        sess.message = '未知状态 %s' % status
     return sess
 
 
