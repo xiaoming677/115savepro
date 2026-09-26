@@ -76,13 +76,88 @@ docker compose up -d
 
 访问 `http://你的NAS IP:5000`，默认账号 **admin** / 密码 **zxcvbnm**（登录后请立刻在「系统设置」改掉）。
 
-### 更新到最新版
+### 方式二：docker-compose.yml 完整内容
 
-```bash
-docker compose pull && docker compose up -d
+没有现成文件的话，新建 `docker-compose.yml`，把下面这段**完整**粘进去：
+
+```yaml
+services:
+  save115:
+    image: ghcr.io/xiaoming677/115savepro:latest
+    container_name: 115savepro
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./config:/app/config
+      - ./log:/app/log
+    environment:
+      - TZ=Asia/Shanghai
 ```
 
-**以后更新就重复这一条命令**。数据都在挂载卷里，升级镜像不会丢数据。
+然后启动：
+
+```bash
+mkdir -p config log
+docker compose up -d
+```
+
+> **两个最容易踩的坑**
+>
+> 1. **缩进必须用空格**，YAML 不认 Tab。上面每一层是 2 个空格。
+>    用 Tab 缩进会报 `top-level object must be a mapping`。
+> 2. 服务名是 `save115` 而**不是** `115savepro` —— 以数字开头的键会被部分
+>    compose 实现和网页版编辑器误解析。容器名仍然是 `115savepro`，使用上无感知。
+
+想改用 Docker Hub 的镜像（国内通常更快），把 `image:` 那行替换成：
+
+```yaml
+    image: xiaoming677/115savepro:latest
+```
+
+想让 QMS 同机访问更省事，把注释打开：
+
+```yaml
+    network_mode: host
+```
+
+### 方式三：不用 compose，直接 docker run
+
+```bash
+mkdir -p config log
+docker run -d --name 115savepro --restart unless-stopped \
+  -p 5000:5000 \
+  -v "$PWD/config:/app/config" \
+  -v "$PWD/log:/app/log" \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/xiaoming677/115savepro:latest
+```
+
+> `-v` 的写法是 `宿主机路径:容器内路径`，中间的 `:` 是分隔符。
+> `$PWD` 是当前目录，所以**要先 `cd` 到数据目录所在位置再执行**。
+> Windows CMD 用 `%cd%`，PowerShell 用 `${PWD}`。
+
+### 方式四：本地构建镜像（改过代码才需要）
+
+```bash
+mkdir -p config log
+docker build -t 115savepro:latest .
+docker run -d --name 115savepro --restart unless-stopped \
+  -p 5000:5000 \
+  -v "$PWD/config:/app/config" \
+  -v "$PWD/log:/app/log" \
+  -e TZ=Asia/Shanghai \
+  115savepro:latest
+```
+
+### 方式五：本机直接运行（开发调试）
+
+```bash
+pip install -r requirements.txt
+python web_app.py          # 默认 0.0.0.0:5000，可用 PORT / HOST 环境变量覆盖
+```
+
+> **需要 Python ≥ 3.12**（`p115client` 的硬性要求，Docker 镜像用的是 `python:3.12-slim`）。
 
 ### 可用的镜像地址
 
@@ -92,40 +167,13 @@ docker compose pull && docker compose up -d
 | **Docker Hub** | `xiaoming677/115savepro:latest` | 否（国内拉取通常更快） |
 | 本地构建 | `115savepro:latest` | 否 |
 
-也可以不用 compose，直接跑：
+### 更新到最新版
 
 ```bash
-docker run -d --name 115savepro --restart unless-stopped \
-  -p 5000:5000 \
-  -v $(pwd)/config:/app/config \
-  -v $(pwd)/log:/app/log \
-  -e TZ=Asia/Shanghai \
-  ghcr.io/xiaoming677/115savepro:latest
+docker compose pull && docker compose up -d
 ```
 
-### 方式二：本地构建
-
-```bash
-mkdir -p config log
-docker build -t 115savepro:latest .
-docker run -d \
-  --name 115savepro \
-  --restart unless-stopped \
-  -p 5000:5000 \
-  -v $(pwd)/config:/app/config \
-  -v $(pwd)/log:/app/log \
-  -e TZ=Asia/Shanghai \
-  115savepro:latest
-```
-
-### 方式三：直接跑（本地调试）
-
-```bash
-pip install -r requirements.txt
-python web_app.py          # 默认 0.0.0.0:5000，可用 PORT / HOST 环境变量覆盖
-```
-
-> **需要 Python ≥ 3.12**（`p115client` 的硬性要求，Docker 镜像用的是 `python:3.12-slim`）。
+**以后更新就重复这一条命令**。数据都在挂载卷里，升级镜像不会丢数据。
 
 ### 飞牛 NAS 上要注意的
 
