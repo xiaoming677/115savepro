@@ -6,8 +6,10 @@
 # 更新到最新版：
 #   docker compose pull && docker compose up -d
 #
-# 想改用 Docker Hub 镜像的话，把 image 换成：
-#   image: 你的DockerHub用户名/115savepro:latest
+# 想改用 Docker Hub 镜像的话，把 image 换成（国内拉取通常更快）：
+#   image: xiaoming677/115savepro:latest
+# 或用带版本号的：
+#   image: xiaoming677/115savepro:1.0.0
 #
 # 想本地构建（改代码后自己编译）：
 #   打开下面的 build: . 并注释掉 image 行，然后 docker compose up -d --build

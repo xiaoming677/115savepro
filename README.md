@@ -89,7 +89,7 @@ docker compose pull && docker compose up -d
 | 来源 | 地址 | 需要登录 |
 |---|---|---|
 | **GHCR**（默认，零配置） | `ghcr.io/xiaoming677/115savepro:latest` | 否，公开可拉 |
-| Docker Hub | `你的用户名/115savepro:latest` | 需先在仓库配好 Secrets，见[发布与更新](#发布与更新维护者看这里) |
+| **Docker Hub** | `xiaoming677/115savepro:latest` | 否（国内拉取通常更快） |
 | 本地构建 | `115savepro:latest` | 否 |
 
 也可以不用 compose，直接跑：
