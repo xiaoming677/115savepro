@@ -33,7 +33,7 @@ LOG_DIR = os.path.join(BASE_DIR, 'log')
 SECRET_FILE = os.path.join(CONFIG_DIR, 'secret.key')
 
 # 版本号：更新镜像后可在页面左下角 / GET /api/version 核对
-APP_VERSION = '1.7.0'
+APP_VERSION = '1.7.1'
 
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'static'), static_url_path='/static')
 app.config['JSON_AS_ASCII'] = False
@@ -599,15 +599,77 @@ def api_share_browse():
 @app.route('/api/dir/list', methods=['GET'])
 @login_required
 def api_dir_list():
-    parent = request.args.get('cid') or 0
+    """列出某层子目录，供路径选择器使用
+
+    参数：
+      cid  目录 id（默认 0 = 根目录）；也接受 root / 空
+      path 直接传路径（与 cid 二选一，path 优先）
+      raw  1 = 附带 115 的原始条目，用于排查「看不到目录」
+    """
+    cid_arg = request.args.get('cid') or 0
+    want_raw = (request.args.get('raw') or '') in ('1', 'true', 'yes')
+    path = (request.args.get('path') or '').strip()
     try:
-        if str(parent) in ('root', '', '0'):
+        cid = 0
+        if path:
+            chain = storage.dir_chain(path)
+            cid = chain[-1]['cid'] if chain else 0
+        elif str(cid_arg) in ('root', '', '0'):
             cid = 0
-        elif str(parent).startswith('/'):
-            cid = storage.dir_id(parent)
+        elif str(cid_arg).startswith('/'):
+            cid = storage.dir_id(cid_arg)
         else:
-            cid = int(parent)
-        return ok({'cid': cid, 'items': storage.path_tree(cid)})
+            try:
+                cid = int(cid_arg)
+            except (TypeError, ValueError):
+                return fail('目录 id 不合法：%s' % cid_arg)
+        data = storage.path_tree(cid, with_raw=want_raw)
+        data['cid'] = cid
+        return ok(data)
+    except StorageError as e:
+        return fail(str(e))
+
+
+@app.route('/api/dir/chain', methods=['GET', 'POST'])
+@login_required
+def api_dir_chain():
+    """把路径解析成层级链，让选择器打开时能定位到当前填的路径"""
+    data = request.get_json(silent=True) if request.method == 'POST' else {}
+    path = (data or {}).get('path') or request.args.get('path') or '/'
+    try:
+        return ok({'path': storage.normalize_path(path), 'chain': storage.dir_chain(path)})
+    except StorageError as e:
+        return fail(str(e))
+
+
+@app.route('/api/dir/create', methods=['POST'])
+@login_required
+def api_dir_create():
+    """在选择器里新建目录（115 里建好之后才能选中）"""
+    data = request.get_json(silent=True) or {}
+    parent = data.get('cid')
+    name = (data.get('name') or '').strip()
+    if not name:
+        return fail('请输入目录名')
+    for ch in '<>':
+        if ch in name:
+            return fail('目录名不能包含 %s' % ch)
+    if '/' in name or '\\' in name:
+        return fail('目录名不能包含斜杠')
+    try:
+        parent_cid = parent if parent is not None else 0
+        storage.fs_mkdir(parent_cid, name)
+        # 建完之后回查一次拿到新目录的 cid，前端可以直接进去
+        new_cid = None
+        try:
+            for it in storage.list_dir(parent_cid, limit=storage.MAX_PAGE,
+                                       only_dir=True)['items']:
+                if it.get('is_dir') and str(it.get('name')) == name:
+                    new_cid = it['id']
+                    break
+        except StorageError:
+            pass
+        return ok({'cid': new_cid, 'name': name})
     except StorageError as e:
         return fail(str(e))
 

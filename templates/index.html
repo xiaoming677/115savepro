@@ -715,36 +715,82 @@ async function taskEditModal(uid){
 }
 
 /* --------- 目录选择器 --------- */
-function pickDir(inputId){
-  let stack = [{cid:0,name:'根目录'}];
+async function pickDir(inputId){
+  const el = document.getElementById(inputId);
+  let stack = [{cid:0, name:'根目录'}];
+  let loading = false;
+
   const w = modal('选择 115 目录', `
     <div class="crumbs" id="crumbs"></div>
-    <div class="picklist" id="plist"><div class="empty">加载中…</div></div>`,
-    `<button class="btn" data-close>取消</button>
+    <div class="picklist" id="plist"><div class="empty">加载中…</div></div>
+    <div class="hint" id="pd-hint" style="margin-top:8px"></div>`,
+    `<button class="btn" id="pd-new">新建目录</button>
+     <button class="btn" id="pd-refresh">刷新</button>
+     <button class="btn" data-close>取消</button>
      <button class="btn primary" id="pd-ok">选择当前目录</button>`, 'wide');
+
+  const curCid = () => stack[stack.length-1].cid;
+  const curPath = () => stack.length === 1 ? '/' : '/' + stack.slice(1).map(s=>s.name).join('/');
+
   async function load(){
+    if (loading) return;
+    loading = true;
     $('#crumbs',w).innerHTML = stack.map((s,i)=>`<span class="c" data-i="${i}">${esc(s.name)}</span>`).join('<span class="sep">/</span>');
+    $('#plist',w).innerHTML = '<div class="empty">加载中…</div>';
     try{
-      const r = await api('/api/dir/list?cid=' + stack[stack.length-1].cid);
-      const items = r.data.items || [];
+      const r = await api('/api/dir/list?cid=' + encodeURIComponent(curCid()));
+      const items = (r.data && r.data.items) || [];
       $('#plist',w).innerHTML = items.length ? items.map(i =>
-        `<div class="pickrow" data-cid="${i.id}" data-name="${esc(i.name)}"><span>📁</span><span class="nm">${esc(i.name)}</span><span class="muted">›</span></div>`
+        `<div class="pickrow" data-cid="${i.id}" data-name="${esc(i.name)}"><span>📁</span><span class="nm">${esc(i.name)}</span><span class="muted">进入 ›</span></div>`
       ).join('') : '<div class="empty">该目录下没有子目录</div>';
-    }catch(e){ $('#plist',w).innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+      $('#pd-hint',w).innerHTML = `当前：<code>${esc(curPath())}</code>　`
+        + (items.length ? `共 ${items.length} 个子目录 —— 点一行进入下一层，或直接「选择当前目录」`
+                        : '可以直接「选择当前目录」，或先用「新建目录」建一个');
+    }catch(e){
+      $('#plist',w).innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+      $('#pd-hint',w).innerHTML = '';
+    }finally{ loading = false; }
   }
-  w.addEventListener('click', e => {
+
+  // 打开时先定位到输入框里已填的路径，省得一层层点
+  (async () => {
+    const cur = ((el && el.value) || '').trim();
+    if (cur && cur !== '/'){
+      try{
+        const r = await api('/api/dir/chain?path=' + encodeURIComponent(cur));
+        const chain = (r.data && r.data.chain) || [];
+        if (chain.length > 1) stack = chain.map(x => ({cid: x.cid, name: x.name}));
+      }catch(e){ /* 路径还没创建也没关系，从根目录开始 */ }
+    }
+    load();
+  })();
+
+  w.addEventListener('click', async e => {
     const c = e.target.closest('.c');
     if (c){ stack = stack.slice(0, Number(c.dataset.i)+1); load(); return; }
+
     const row = e.target.closest('.pickrow');
     if (row){ stack.push({cid:Number(row.dataset.cid), name: row.dataset.name}); load(); return; }
+
+    if (e.target.id === 'pd-refresh'){ load(); return; }
+
+    if (e.target.id === 'pd-new'){
+      const name = prompt('在当前目录下新建文件夹：\n' + curPath() + '/');
+      if (!name || !name.trim()) return;
+      try{
+        const r = await api('/api/dir/create', {method:'POST', body:{cid:curCid(), name:name.trim()}});
+        toast('已创建「' + r.data.name + '」','ok');
+        if (r.data.cid){ stack.push({cid:r.data.cid, name:r.data.name}); }
+        load();
+      }catch(err){ toast(err.message,'err'); }
+      return;
+    }
+
     if (e.target.id === 'pd-ok'){
-      const path = '/' + stack.slice(1).map(s=>s.name).join('/');
-      const val = stack.length === 1 ? '/' : path;
-      const el = document.getElementById(inputId); if (el) el.value = val;
+      if (el) el.value = curPath();
       w.remove();
     }
   });
-  load();
 }
 
 /* --------- 分享文件夹选择器 --------- */

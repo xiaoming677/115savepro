@@ -25,7 +25,9 @@ from loguru import logger
 
 from p115client import P115Client, P115ShareFileSystem, P115OSError, check_response
 from p115client import tool as p115tool
-from p115client.tool import normalize_attr_simple
+
+# 说明：刻意不使用 p115client.tool.normalize_attr_simple 做目录判定，
+# 它按 `fc` 字段判 is_dir，会把非空目录误判成文件（详见 _normalize_item）。
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(BASE_DIR, 'config')
@@ -424,6 +426,57 @@ def _p115_call(fn, payload=None, **kw):
         raise StorageError(_friendly_error(e)) from e
 
 
+# 115 网页接口的分页上限（p115client 文档：limit 最大值是 1,150）
+MAX_PAGE = 1150
+
+
+def _to_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_item(raw):
+    """把 115 网页接口返回的条目统一成内部结构
+
+    **目录判定只认「有没有 fid」**（115 网页接口的稳定规则）：
+      - 文件项：有 `fid`（自身文件 id），`cid` 是它所在目录
+      - 目录项：有 `cid`（自身目录 id）与 `pid`（父目录 id），**没有 `fid`**
+
+    ⚠️ 不要用 p115client 的 `normalize_attr_simple` 判目录。它优先看 `fc` 字段
+    （`is_dir = int(info['fc']) == 0`），而 `fc` 在不同接口里语义并不一致：
+    只要它不是 0，目录就会被判成文件，紧接着取 `info['fid']` 抛 KeyError，
+    被容错分支吞掉后统一变成 `is_dir=False` —— **目录从列表里整体消失**，
+    表现就是「进不去子目录 / 选不到目录」。
+
+    p115client 自己在 `overview_attr()` 处理同一形态（带 `n` 字段）的数据时，
+    用的也是 `"fid" not in info` 这条规则，本函数与它保持一致。
+    """
+    if not isinstance(raw, dict):
+        return None
+    fid = raw.get('fid')
+    is_dir = fid in (None, '', 0, '0')          # 没有有效 fid → 目录
+    if is_dir:
+        item_id = _to_int(raw.get('cid'))
+        parent_id = _to_int(raw.get('pid'))
+    else:
+        item_id = _to_int(fid)
+        parent_id = _to_int(raw.get('cid'))
+    name = raw.get('n') or raw.get('fn') or raw.get('file_name') or ''
+    return {
+        'is_dir': is_dir,
+        'id': item_id,
+        'parent_id': parent_id,
+        'name': str(name),
+        'size': _to_int(raw.get('s') or raw.get('fs')),
+        'sha1': str(raw.get('sha') or raw.get('sha1') or '').upper(),
+        'pickcode': str(raw.get('pc') or ''),
+        'ctime': _to_int(raw.get('tp')),
+        'mtime': _to_int(raw.get('te')),
+    }
+
+
 # --------------------------------------------------------------------------
 # 主存储类
 # --------------------------------------------------------------------------
@@ -674,35 +727,80 @@ class Storage115:
             cid = self.dir_id(path, client)
         return cid
 
-    def list_dir(self, cid=0, offset=0, limit=100, client=None, only_dir=False):
-        """罗列目录内容，返回 {'cid', 'total', 'items': [...]}"""
+    def dir_chain(self, path, client=None):
+        """把 '/我的影视/剧集' 解析成可导航的层级链
+
+        返回 [{'cid': 0, 'name': '根目录'}, {'cid': 111, 'name': '我的影视'}, ...]
+
+        用于路径选择器「打开时直接定位到输入框里已填的路径」。
+        每一级前缀解析一次（`fs_dir_getid` 支持整段路径，所以只有一个前缀时也只调用一次）；
+        路径深度通常不超过 5 级，而且只在打开选择器时跑一遍，开销可以接受。
+        某一级不存在（路径还没创建 / 写错了）就停在那里，前面的层级仍然可用。
+        """
         client = client or self.current_client()
+        parts = [p for p in self.normalize_path(path).split('/') if p]
+        chain = [{'cid': 0, 'name': '根目录'}]
+        prefix = ''
+        for name in parts:
+            prefix = prefix + '/' + name
+            try:
+                cid = _to_int(self.dir_id(prefix, client))
+            except StorageError:
+                break
+            if not cid:
+                break
+            chain.append({'cid': cid, 'name': name})
+        return chain
+
+    def list_dir(self, cid=0, offset=0, limit=100, client=None, only_dir=False):
+        """罗列目录内容，返回 {'cid', 'total', 'items': [...]}
+
+        only_dir=True（路径选择器用）走官方参数 `nf=1`「不要显示文件」。
+
+        ⚠️ 不要改用 `type=0` 来「只取目录」：那是「文件类型=全部」，
+        仍然属于按类型筛选，而按类型筛选时目录需要额外 `stdir=1` 才会带出来，
+        否则会变成「一个目录都看不到」。`nf` 才是「仅显示目录」的专用参数。
+        """
+        client = client or self.current_client()
+        size = _to_int(limit, 100)
+        if size <= 0:
+            size = 100
         payload = {
-            'cid': int(cid or 0),
-            'offset': int(offset or 0),
-            'limit': int(limit or 100),
+            'cid': _to_int(cid),
+            'offset': max(0, _to_int(offset)),
+            'limit': min(size, MAX_PAGE),
             'show_dir': 1,
             'natsort': 0,
-            'record_open_time': 0,
-            'fc_mix': 0,
+            'record_open_time': 0,   # 0 = 不改动「最近打开」排序
+            'fc_mix': 0,             # 0 = 目录置顶
         }
         if only_dir:
-            payload['type'] = 0
+            payload['nf'] = 1
         resp = client.fs_files(payload)
-        # fs_files 在「空目录」等情况下 state 可能为 0，这里做宽容处理
-        if isinstance(resp, dict) and resp.get('state') in (0, False) and not resp.get('data'):
-            raise StorageError(_friendly_error(resp.get('message') or resp))
+        # fs_files 在「空目录」等情况下 state 可能为 0。
+        # 这里区分对待：有错误信息 → 报友好错误；只是空 → 返回空列表，
+        # 否则进一个空目录会直接弹错。
+        if isinstance(resp, dict) and resp.get('state') in (0, False):
+            if not resp.get('data'):
+                detail = str(resp.get('message') or resp.get('error') or '').strip()
+                if not detail and resp.get('errno'):
+                    detail = 'errno=%s' % resp['errno']
+                if detail:
+                    raise StorageError(_friendly_error(detail))
+                return {'cid': _to_int(cid), 'total': 0, 'items': []}
         resp = resp or {}
+        raw_list = resp.get('data')
+        if isinstance(raw_list, dict):     # 容错：极少数情况下 data 不是数组
+            raw_list = []
         items = []
-        for raw in (resp.get('data') or []):
-            try:
-                items.append(normalize_attr_simple(raw))
-            except Exception:  # noqa: BLE001
-                items.append({'is_dir': False, 'id': raw.get('fid'), 'name': raw.get('n') or '',
-                              'size': int(raw.get('s') or 0), 'sha1': raw.get('sha') or '',
-                              'pickcode': raw.get('pc') or '', 'mtime': 0, 'ctime': 0, 'type': 99})
+        for raw in (raw_list or []):
+            it = _normalize_item(raw)
+            if it:
+                items.append(it)
         items.sort(key=lambda x: (not x.get('is_dir'), (x.get('name') or '').lower()))
-        return {'cid': int(cid or 0), 'total': int(resp.get('count') or len(items)), 'items': items}
+        return {'cid': _to_int(cid),
+                'total': _to_int(resp.get('count'), len(items)),
+                'items': items}
 
     def list_children_index(self, cid, client=None, max_items=20000):
         """把目录下所有直接子项建成索引：{小写名: item} 与 {sha1: item}，用于去重"""
@@ -726,10 +824,20 @@ class Storage115:
             offset += limit
         return by_name, by_sha1
 
-    def path_tree(self, cid=0, client=None):
-        """路径选择器用：返回某层的子目录列表"""
-        page = self.list_dir(cid, limit=1000, client=client, only_dir=True)
-        return [{'id': i['id'], 'name': i['name']} for i in page['items'] if i.get('is_dir')]
+    def path_tree(self, cid=0, client=None, with_raw=False):
+        """路径选择器用：返回某层的子目录列表
+
+        返回 {'items': [{'id','name','has_child'?}], 'total': N, 'need_login': bool}
+        with_raw=True 时附带 115 的原始条目，便于排查「看不到目录」这类问题。
+        """
+        page = self.list_dir(cid, limit=MAX_PAGE, client=client, only_dir=True)
+        items = [{'id': i['id'], 'name': i['name']} for i in page['items'] if i.get('is_dir')]
+        # 按名字排序，让选择器里的顺序稳定好找
+        items.sort(key=lambda x: (x.get('name') or '').lower())
+        out = {'items': items, 'total': page.get('total') or len(items)}
+        if with_raw:
+            out['raw'] = page['items']
+        return out
 
     # ---------------- 任务 ----------------
 
@@ -1250,14 +1358,14 @@ class Storage115:
 
     def fs_search(self, keyword, cid=0, limit=100, client=None):
         client = client or self.current_client()
-        resp = _p115_call(client.fs_search, {'search_value': keyword, 'cid': int(cid or 0),
-                                             'limit': int(limit), 'offset': 0})
+        resp = _p115_call(client.fs_search, {'search_value': keyword, 'cid': _to_int(cid),
+                                             'limit': max(1, min(_to_int(limit, 100), MAX_PAGE)),
+                                             'offset': 0})
         items = []
         for raw in (resp.get('data') or []):
-            try:
-                items.append(normalize_attr_simple(raw))
-            except Exception:  # noqa: BLE001
-                continue
+            it = _normalize_item(raw)
+            if it:
+                items.append(it)
         return items
 
     def share_create(self, fids, receive_code=None, days=None, client=None):
