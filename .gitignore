@@ -8,6 +8,8 @@ config/config.json.tmp
 # 一键更新时由助手容器写入，含本机项目路径，不应提交
 config/update.log
 config/*.log
+# 备份文件（内含账号 Cookie，绝对不能提交）
+config/backups/
 log/
 .venv/
 __pycache__/

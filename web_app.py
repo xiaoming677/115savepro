@@ -17,6 +17,7 @@ from flask import Flask, jsonify, request, session, send_from_directory
 from loguru import logger
 
 import notify as notifier
+import backup
 import qms_client
 import updater
 from history_db import (get_all_history, get_kv, get_qms_logs, get_task_history,
@@ -32,7 +33,7 @@ LOG_DIR = os.path.join(BASE_DIR, 'log')
 SECRET_FILE = os.path.join(CONFIG_DIR, 'secret.key')
 
 # 版本号：更新镜像后可在页面左下角 / GET /api/version 核对
-APP_VERSION = '1.6.0'
+APP_VERSION = '1.7.0'
 
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'static'), static_url_path='/static')
 app.config['JSON_AS_ASCII'] = False
@@ -87,6 +88,20 @@ def ok(data=None, **extra):
 
 def fail(message, code=400):
     return jsonify({'success': False, 'message': str(message)}), code
+
+
+def _truthy(value, default=False):
+    """把前端传来的 0/1、true/false、'on' 统一成布尔值
+
+    区分「没传」和「传了 false」：没传就用默认值。
+    """
+    if value is None or value == '':
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on', 'y')
 
 
 def current_username():
@@ -1074,6 +1089,211 @@ def api_update_log():
 def api_update_log_clear():
     updater.clear_update_log()
     return ok()
+
+
+# --------------------------------------------------------------------------
+# 备份与恢复
+# --------------------------------------------------------------------------
+def _apply_backup_payload(payload, mode='replace', parts=None, save_current=True):
+    """把备份应用到当前状态（共用逻辑：本地备份恢复 / 上传文件恢复）
+
+    save_current=True 时先自动把当前状态存成一份 before-restore 备份，
+    拿错文件也能退回来。
+    """
+    payload = backup.validate(payload)
+    # 显式传了空列表/全是无效项 → 直接拒绝，别白存一份安全备份
+    if parts is not None and not [p for p in parts if p in backup.PART_KEYS]:
+        raise backup.BackupError('没有选择要恢复的内容')
+    safety = ''
+    if save_current:
+        try:
+            cur = backup.build_payload(storage.config, include_cookies=True,
+                                      include_auth=True, include_history=False)
+            safety = backup.save_local(cur, tag='before-restore')
+        except Exception as e:  # noqa: BLE001
+            logger.warning('恢复前自动存档失败：%s' % e)
+
+    # 备份里如果有 QMS 配置，先取出（apply_payload 会给回来）
+    qms_before = None
+    try:
+        qms_before = qms_client.get_links(qms_client.load_cfg())
+    except Exception:  # noqa: BLE001
+        pass
+
+    new_cfg, report = backup.apply_payload(
+        storage.config, payload,
+        mode=mode, parts=parts,
+    )
+
+    # 写回配置 + 让内存状态、客户端缓存、定时任务全部重载
+    try:
+        storage.config = new_cfg
+        storage._save_config()
+        storage.reload()
+    except Exception as e:  # noqa: BLE001
+        raise StorageError('配置写回失败：%s' % e)
+
+    if 'qms' in (list(backup.PART_KEYS) if parts is None else parts) and report.get('qms'):
+        qms_client.save_cfg(report['qms'])
+        report['detail'].append('QMS 联动配置已写入')
+
+    scheduler.sync_jobs()
+    scheduler._add_quota_job()
+    scheduler._add_offline_watch_job()
+
+    report['safety_backup'] = safety
+    report['version'] = APP_VERSION
+    report['qms_links'] = len(qms_client.get_links(qms_client.load_cfg()))
+    report['qms_links_before'] = len(qms_before or [])
+    return report
+
+
+@app.route('/api/backup/parts', methods=['GET'])
+@login_required
+def api_backup_parts():
+    """可恢复的部件清单（前端渲染勾选框用）"""
+    return ok({
+        'parts': [{'key': k, 'label': v} for k, v in backup.PARTS],
+        'max_local': backup.MAX_LOCAL,
+        'dir': 'config/backups',
+    })
+
+
+@app.route('/api/backup/export', methods=['GET', 'POST'])
+@login_required
+def api_backup_export():
+    """生成备份。save=1 时同时在服务器上留一份"""
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+    else:
+        data = request.args
+    inc_cookies = _truthy(data.get('cookies'), True)
+    inc_auth = _truthy(data.get('auth'), True)
+    inc_history = _truthy(data.get('history'), True)
+    save = _truthy(data.get('save'), False)
+
+    payload = backup.build_payload(storage.config,
+                                   include_cookies=inc_cookies,
+                                   include_auth=inc_auth,
+                                   include_history=inc_history)
+    name = ''
+    if save:
+        try:
+            name = backup.save_local(payload, tag='manual')
+        except Exception as e:  # noqa: BLE001
+            return fail('保存到服务器失败：%s' % e)
+    return ok({'payload': payload, 'saved_name': name,
+               'summary': payload.get('summary'),
+               'filename': '115savepro-backup-%s.json' % time.strftime('%Y%m%d-%H%M%S')})
+
+
+@app.route('/api/backup/preview', methods=['POST'])
+@login_required
+def api_backup_preview():
+    """预览一份备份（上传的文本或服务器上的文件）"""
+    data = request.get_json(silent=True) or {}
+    try:
+        if data.get('content'):
+            payload = backup.parse_text(data['content'])
+        elif data.get('name'):
+            payload = backup.load_local(data['name'])
+        else:
+            return fail('请提供备份内容或备份文件名')
+        return ok(backup.preview(payload))
+    except backup.BackupError as e:
+        return fail(str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.exception('预览备份失败')
+        return fail('无法解析这份备份：%s' % e)
+
+
+@app.route('/api/backup/import', methods=['POST'])
+@login_required
+def api_backup_import():
+    """从上传的内容恢复"""
+    data = request.get_json(silent=True) or {}
+    mode = 'merge' if str(data.get('mode') or '').lower() == 'merge' else 'replace'
+    parts = data.get('parts')
+    if parts is not None and not isinstance(parts, list):
+        parts = None
+    try:
+        payload = backup.parse_text(data.get('content') or '')
+        report = _apply_backup_payload(payload, mode=mode, parts=parts)
+        return ok(report)
+    except backup.BackupError as e:
+        return fail(str(e))
+    except StorageError as e:
+        return fail(str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.exception('恢复备份失败')
+        return fail('恢复失败：%s' % e)
+
+
+@app.route('/api/backup/list', methods=['GET'])
+@login_required
+def api_backup_list():
+    return ok({'items': backup.list_local(), 'max_local': backup.MAX_LOCAL,
+               'dir': 'config/backups'})
+
+
+@app.route('/api/backup/save', methods=['POST'])
+@login_required
+def api_backup_save():
+    """在服务器上生成一份备份（不下载）"""
+    data = request.get_json(silent=True) or {}
+    payload = backup.build_payload(storage.config,
+                                   include_cookies=_truthy(data.get('cookies'), True),
+                                   include_auth=_truthy(data.get('auth'), True),
+                                   include_history=_truthy(data.get('history'), True))
+    try:
+        name = backup.save_local(payload, tag='manual')
+    except Exception as e:  # noqa: BLE001
+        return fail('保存失败：%s' % e)
+    return ok({'name': name, 'summary': payload.get('summary')})
+
+
+@app.route('/api/backup/restore', methods=['POST'])
+@login_required
+def api_backup_restore():
+    """用服务器上的某个备份恢复"""
+    data = request.get_json(silent=True) or {}
+    mode = 'merge' if str(data.get('mode') or '').lower() == 'merge' else 'replace'
+    parts = data.get('parts')
+    if parts is not None and not isinstance(parts, list):
+        parts = None
+    try:
+        payload = backup.load_local(data.get('name') or '')
+        report = _apply_backup_payload(payload, mode=mode, parts=parts)
+        return ok(report)
+    except backup.BackupError as e:
+        return fail(str(e))
+    except StorageError as e:
+        return fail(str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.exception('从本地备份恢复失败')
+        return fail('恢复失败：%s' % e)
+
+
+@app.route('/api/backup/download/<path:name>', methods=['GET'])
+@login_required
+def api_backup_download(name):
+    """下载服务器上的某份备份"""
+    try:
+        backup.load_local(name)          # 先校验文件名与可读性
+        return send_from_directory(backup.BACKUP_DIR, name, as_attachment=True)
+    except backup.BackupError as e:
+        return fail(str(e), 404)
+
+
+@app.route('/api/backup/delete', methods=['POST'])
+@login_required
+def api_backup_delete():
+    data = request.get_json(silent=True) or {}
+    try:
+        backup.delete_local(data.get('name') or '')
+        return ok({'items': backup.list_local()})
+    except backup.BackupError as e:
+        return fail(str(e))
 
 
 # --------------------------------------------------------------------------

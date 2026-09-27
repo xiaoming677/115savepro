@@ -1320,11 +1320,195 @@ VIEWS.settings = async function(){
           <div class="field"><label>原密码</label><input type="password" id="st-op"></div>
           <div class="field"><label>新密码</label><input type="password" id="st-np"></div>
         </div><button class="btn primary" onclick="changePwd()">修改密码</button></div></div>
+      <div class="card"><div class="card-head">备份与恢复</div><div class="card-body">
+        <div class="hint">备份内容：115 账号（含 Cookie）、转存任务、QMS 联动、通知渠道、系统设置。<br>
+          ⚠️ <b>默认导出的文件里含有 115 账号登录凭据</b>，请自己保管好，别随手发给别人。</div>
+        <div class="row" style="margin-top:12px">
+          <div class="field" style="max-width:260px"><label class="chk"><input type="checkbox" id="bk-cookies" checked> 包含账号 Cookie</label></div>
+          <div class="field" style="max-width:260px"><label class="chk"><input type="checkbox" id="bk-auth" checked> 包含后台密码</label></div>
+          <div class="field" style="max-width:260px"><label class="chk"><input type="checkbox" id="bk-history" checked> 包含历史记录</label></div>
+        </div>
+        <div class="hint">取消「包含账号 Cookie」后，导出的文件不含登录凭据，可以放心发给别人帮忙排查问题（恢复后需要重新登录 115）。</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px">
+          <button class="btn primary" onclick="bkExport(true)">导出并下载</button>
+          <button class="btn" onclick="bkExport(false)">备份到服务器</button>
+          <button class="btn" onclick="bkPickFile()">从文件恢复…</button>
+        </div>
+        <div style="margin-top:18px">
+          <div class="hint" style="margin-bottom:8px">服务器上的备份（<code>config/backups</code>，最多保留 <span id="bk-max">20</span> 份）</div>
+          <div id="bk-list"><div class="empty" style="padding:6px 0">加载中…</div></div>
+        </div>
+        <input type="file" id="bk-file" accept=".json,application/json" style="display:none">
+      </div></div>
       <div class="card"><div class="card-head">版本更新</div><div class="card-body" id="st-upd">
         <div class="empty" style="padding:6px 0">正在检查…</div></div></div>`;
   }catch(e){ $('#st-box').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
   loadUpdateCard();
+  bkLoad();
 };
+
+/* ------------------------------------------------------------
+   备份与恢复
+   ------------------------------------------------------------ */
+function bkOpts(){
+  return {
+    cookies: $('#bk-cookies').checked,
+    auth: $('#bk-auth').checked,
+    history: $('#bk-history').checked,
+  };
+}
+
+function bkSummaryText(s){
+  if (!s) return '—';
+  const p = [];
+  if (s.users) p.push(s.users + ' 账号' + (s.users_with_cookie < s.users ? `（${s.users_with_cookie} 个含凭据）` : ''));
+  if (s.tasks) p.push(s.tasks + ' 任务');
+  if (s.qms_links) p.push(s.qms_links + ' QMS 联动');
+  if (s.history) p.push(s.history + ' 条历史');
+  return p.length ? p.join(' · ') : '（空）';
+}
+
+async function bkExport(download){
+  const o = bkOpts();
+  if (download && !o.cookies &&
+      !confirm('你取消了「包含账号 Cookie」，这份备份恢复后需要重新登录 115 账号。\n\n确认继续导出？')) return;
+  try{
+    const r = await api('/api/backup/export', {method:'POST', body:Object.assign({}, o, {save: !download})});
+    const d = r.data || {};
+    if (download){
+      const blob = new Blob([JSON.stringify(d.payload, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = d.filename || '115savepro-backup.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch(e){} }, 6000);
+      toast('已生成备份文件，浏览器开始下载','ok');
+    } else {
+      toast('已备份到服务器：' + (d.saved_name || ''),'ok');
+    }
+    bkLoad();
+  }catch(e){ toast(e.message,'err'); }
+}
+
+async function bkLoad(){
+  const box = $('#bk-list');
+  if (!box) return;
+  try{
+    const r = await api('/api/backup/list');
+    const d = r.data || {};
+    if ($('#bk-max')) $('#bk-max').textContent = d.max_local || 20;
+    const items = d.items || [];
+    box.innerHTML = table(['时间','来源','内容','大小','操作'], items.map(it => [
+      esc(it.created_at),
+      `<span class="badge ${it.tag==='before-restore'?'warn':'blue'}">${esc(it.tag_text||it.tag)}</span>`,
+      it.invalid ? `<span style="color:var(--err)">${esc(it.error||'文件异常')}</span>`
+                 : esc(it.summary ? bkSummaryText(it.summary) : '（文件较大，未解析摘要）'),
+      esc(it.size_text),
+      `<div class="btn-group">
+        <button class="btn sm" onclick="bkRestoreLocal('${esc(it.name)}')">恢复</button>
+        <a class="btn sm" href="/api/backup/download/${encodeURIComponent(it.name)}">下载</a>
+        <button class="btn sm danger" onclick="bkDelete('${esc(it.name)}')">删除</button></div>`
+    ]), '还没有服务器备份。点上面「备份到服务器」先存一份。');
+  }catch(e){ box.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+async function bkDelete(name){
+  if (!confirm('确认删除这份备份？\n\n' + name + '\n\n（这是不可撤销的操作）')) return;
+  try{ await api('/api/backup/delete',{method:'POST',body:{name}}); toast('已删除','ok'); bkLoad(); }
+  catch(e){ toast(e.message,'err'); }
+}
+
+function bkPickFile(){
+  const inp = $('#bk-file');
+  inp.value = '';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    if (f.size > 32*1024*1024){ toast('文件超过 32MB，拒绝了','err'); return; }
+    let text = '';
+    try { text = await f.text(); }catch(e){ toast('读取文件失败：' + e.message,'err'); return; }
+    bkPreview({content: text}, '/api/backup/import', '文件 ' + f.name);
+  };
+  inp.click();
+}
+
+async function bkRestoreLocal(name){
+  bkPreview({name}, '/api/backup/restore', name);
+}
+
+async function bkPreview(reqBody, endpoint, label){
+  let pv = null;
+  try{ pv = (await api('/api/backup/preview',{method:'POST',body:reqBody})).data; }
+  catch(e){ toast('无法读取这份备份：' + e.message,'err'); return; }
+  bkRestoreDialog(pv, label, (mode, parts) =>
+    api(endpoint, {method:'POST', body:Object.assign({}, reqBody, {mode, parts})}));
+}
+
+function bkRestoreDialog(pv, label, doRestore){
+  const s = pv.summary || {};
+  const parts = pv.available_parts || [];
+  const w = modal('恢复备份', `
+    <div class="hint">来源：<b>${esc(label)}</b></div>
+    <div class="hint">备份时间：${esc(pv.exported_at || '未知')}　程序版本：${esc(pv.version || '未知')}</div>
+    <div class="hint">这份备份包含：<b>${esc(bkSummaryText(s))}</b></div>
+    ${pv.cookies_omitted ? '<div class="hint" style="color:var(--warn);margin-top:6px">⚠️ 这份备份<b>不含账号 Cookie</b>，恢复后需要重新登录 115。</div>' : ''}
+    <div class="field" style="margin-top:16px"><label>恢复方式</label>
+      <label class="chk" style="display:block;margin:6px 0">
+        <input type="radio" name="bk-mode" value="replace" checked> <b>覆盖</b>
+        <span class="muted">— 用备份内容替换现有配置，结果和备份时完全一致</span></label>
+      <label class="chk" style="display:block">
+        <input type="radio" name="bk-mode" value="merge"> <b>合并</b>
+        <span class="muted">— 账号 / 任务 / QMS 连接按 ID 合并，当前多出来的部分保留</span></label>
+    </div>
+    <div class="field"><label>恢复内容</label>
+      ${parts.map(p=>`<label class="chk" style="display:block;margin:4px 0">
+        <input type="checkbox" class="bk-part" value="${esc(p.key)}" checked> ${esc(p.label)}</label>`).join('')
+        || '<div class="hint" style="color:var(--err)">这份备份里没有可恢复的内容</div>'}
+    </div>
+    <div class="hint" style="margin-top:12px">恢复前会自动把<b>当前状态</b>存一份到服务器（来源标为「恢复前自动存档」），选错文件也能退回来。</div>`,
+    `<button class="btn" data-close>取消</button>
+     <button class="btn danger" id="bk-do" ${parts.length?'':'disabled'}>确认恢复</button>`);
+
+  w.addEventListener('click', async e => {
+    if (e.target.id !== 'bk-do') return;
+    const mode = (w.querySelector('input[name="bk-mode"]:checked') || {}).value || 'replace';
+    const sel = Array.from(w.querySelectorAll('.bk-part:checked')).map(x => x.value);
+    if (!sel.length){ toast('至少选一项要恢复的内容','err'); return; }
+    const okGo = mode === 'replace'
+      ? confirm('将用这份备份【覆盖】所选内容，当前配置会被替换。\n\n（当前状态已自动存档，可在备份列表里退回）\n\n确认继续？')
+      : confirm('将以【合并】方式恢复所选内容。\n\n确认继续？');
+    if (!okGo) return;
+    const btn = e.target;
+    btn.disabled = true; btn.textContent = '恢复中…';
+    try{
+      const r = await doRestore(mode, sel);
+      w.remove();
+      bkShowResult(r.data || {});
+      bkLoad();
+      if (VIEWS.settings) VIEWS.settings();
+    }catch(err){
+      btn.disabled = false; btn.textContent = '确认恢复';
+      toast(err.message,'err');
+    }
+  });
+}
+
+function bkShowResult(rep){
+  const lines = (rep.detail || []).map(x=>`<div>✓ ${esc(x)}</div>`).join('');
+  const warn = (rep.skipped || []).map(x=>`<div style="color:var(--warn)">! ${esc(x)}</div>`).join('');
+  const hist = (rep.history && Object.keys(rep.history).length)
+    ? `<div class="hint" style="margin-top:8px">历史写入：${Object.entries(rep.history).map(([k,v])=>`${esc(k)} ${v} 条`).join('　')}</div>`
+    : '';
+  const w = modal('恢复完成', `
+    <div class="hint" style="color:var(--ok)">已按「${rep.mode === 'merge' ? '合并' : '覆盖'}」方式恢复完成。</div>
+    <div style="margin-top:10px;line-height:2">${lines || '<span class="muted">没有发生变化</span>'}</div>
+    ${warn ? `<div style="margin-top:10px;line-height:2">${warn}</div>` : ''}
+    ${hist}
+    ${rep.safety_backup ? `<div class="hint" style="margin-top:10px">恢复前已自动存档：<code>${esc(rep.safety_backup)}</code></div>` : ''}
+    <div class="hint" style="margin-top:10px">如果恢复的账号或任务没立刻出现，刷新页面即可。</div>`,
+    '<button class="btn primary" data-close>知道了</button>');
+  return w;
+}
 
 /* ------------------------------------------------------------
    版本更新（检查 + 一键更新）

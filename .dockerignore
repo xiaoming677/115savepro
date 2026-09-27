@@ -13,6 +13,8 @@ config/secret.key
 config/config.json.tmp
 config/update.log
 config/*.log
+# 备份文件内含账号 Cookie，绝不能打进镜像
+config/backups
 *.md
 Dockerfile
 docker-compose.yml

@@ -266,3 +266,84 @@ def record_offline_event(info_hash, name='', status=0, message=''):
         )
         conn.commit()
         conn.close()
+
+
+# ---------------- 备份 / 恢复 ----------------
+
+# 表名 -> 导出字段（不含自增 id，恢复时重新生成）
+_DUMP_TABLES = {
+    'task_history': ('task_uid', 'order_no', 'start_time', 'end_time', 'success',
+                     'message', 'file_count', 'record'),
+    'qms_trigger_log': ('link_id', 'task_name', 'qms_id', 'trigger_at', 'success',
+                        'message', 'source'),
+    'offline_log': ('info_hash', 'name', 'status', 'event_at', 'message'),
+}
+# 去重键：恢复成 merge 模式时，靠这些字段判断「这条是不是已经有了」
+_DEDUPE_KEYS = {
+    'task_history': ('task_uid', 'start_time'),
+    'qms_trigger_log': ('link_id', 'trigger_at', 'message'),
+    'offline_log': ('info_hash', 'event_at'),
+}
+
+
+def dump_tables():
+    """导出所有历史类表（用于备份）"""
+    _init()
+    out = {}
+    with _lock:
+        conn = _connect()
+        for table, cols in _DUMP_TABLES.items():
+            try:
+                cur = conn.execute('SELECT %s FROM %s ORDER BY id ASC' % (','.join(cols), table))
+                out[table] = [dict(zip(cols, row)) for row in cur.fetchall()]
+            except sqlite3.Error:
+                out[table] = []
+        conn.close()
+    return out
+
+
+def restore_tables(data, mode='replace'):
+    """把备份里的历史写回来
+
+    mode='replace' 先清空再灌；mode='merge' 按去重键跳过已有的。
+    返回 {表名: 写入条数}
+    """
+    _init()
+    data = data or {}
+    stats = {}
+    with _lock:
+        conn = _connect()
+        for table, cols in _DUMP_TABLES.items():
+            rows = data.get(table) or []
+            if not isinstance(rows, list):
+                continue
+            if mode == 'replace':
+                conn.execute('DELETE FROM %s' % table)
+                existing = set()
+            else:
+                keys = _DEDUPE_KEYS[table]
+                cur = conn.execute('SELECT %s FROM %s' % (','.join(keys), table))
+                existing = {tuple(str(v) for v in r) for r in cur.fetchall()}
+            written = 0
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                vals = [row.get(c) for c in cols]
+                if mode != 'replace':
+                    key = tuple(str(row.get(c) or '') for c in _DEDUPE_KEYS[table])
+                    if key in existing:
+                        continue
+                    existing.add(key)
+                try:
+                    conn.execute(
+                        'INSERT INTO %s (%s) VALUES (%s)'
+                        % (table, ','.join(cols), ','.join('?' * len(cols))),
+                        vals,
+                    )
+                    written += 1
+                except sqlite3.Error:
+                    pass
+            stats[table] = written
+        conn.commit()
+        conn.close()
+    return stats
