@@ -32,7 +32,7 @@ LOG_DIR = os.path.join(BASE_DIR, 'log')
 SECRET_FILE = os.path.join(CONFIG_DIR, 'secret.key')
 
 # 版本号：更新镜像后可在页面左下角 / GET /api/version 核对
-APP_VERSION = '1.4.0'
+APP_VERSION = '1.5.0'
 
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'static'), static_url_path='/static')
 app.config['JSON_AS_ASCII'] = False
@@ -800,6 +800,7 @@ def api_qms_config():
     norm.pop('api_key', None)
     norm.pop('password', None)
     return ok({'config': norm, 'links': qms_client.get_links(cfg),
+               'wait_modes': [{'value': v, 'label': t} for v, t in qms_client.WAIT_MODES],
                'last_trigger_at': cfg.get('last_trigger_at'),
                'last_trigger_result': cfg.get('last_trigger_result'),
                'last_trigger_task': cfg.get('last_trigger_task'),
@@ -841,6 +842,18 @@ def api_qms_pathes():
         return fail(str(e))
 
 
+@app.route('/api/qms/sync-paths', methods=['POST'])
+@login_required
+def api_qms_sync_paths():
+    """列 QMS 的同步路径 —— 用于「先生成 strm」下拉"""
+    data = request.get_json(silent=True) or {}
+    cfg = qms_client.merge_cfg(qms_client.load_cfg(), data)
+    try:
+        return ok(qms_client.QmsClient(cfg).list_sync_paths())
+    except qms_client.QmsError as e:
+        return fail(str(e))
+
+
 @app.route('/api/qms/link/add', methods=['POST'])
 @login_required
 def api_qms_link_add():
@@ -858,11 +871,54 @@ def api_qms_link_add():
         'qms_media_type': str(data.get('qms_media_type') or ''),
         'enabled': True,
         'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+        # ---- 先生成 strm，再刮削 ----
+        'sync_path_id': data.get('sync_path_id') or None,
+        'sync_path_name': str(data.get('sync_path_name') or ''),
+        'wait_mode': str(data.get('wait_mode') or qms_client.DEFAULT_WAIT_MODE),
+        'wait_seconds': int(data.get('wait_seconds') or qms_client.DEFAULT_WAIT_SECONDS),
+        'wait_timeout': int(data.get('wait_timeout') or qms_client.DEFAULT_WAIT_TIMEOUT),
     }
     links.append(link)
     cfg['links'] = links
     qms_client.save_cfg(cfg)
-    return ok(link)
+    return ok(qms_client.get_links({'links': [link]})[0])
+
+
+@app.route('/api/qms/link/update', methods=['POST'])
+@login_required
+def api_qms_link_update():
+    """更新一条连接的配置（改绑同步路径 / 调整等待策略 / 换刮削任务）"""
+    data = request.get_json(silent=True) or {}
+    lid = str(data.get('id') or '')
+    if not lid:
+        return fail('缺少连接 id')
+    cfg = qms_client.load_cfg()
+    target = None
+    for l in (cfg.get('links') or []):
+        if str(l.get('id')) == lid:
+            target = l
+            break
+    if target is None:
+        return fail('连接不存在')
+
+    if 'qms_id' in data:
+        target['qms_id'] = data.get('qms_id')
+    if 'qms_path' in data:
+        target['qms_path'] = str(data.get('qms_path') or '')
+    if 'sync_path_id' in data:
+        target['sync_path_id'] = data.get('sync_path_id') or None
+    if 'sync_path_name' in data:
+        target['sync_path_name'] = str(data.get('sync_path_name') or '')
+    if 'wait_mode' in data:
+        mode = str(data.get('wait_mode') or qms_client.DEFAULT_WAIT_MODE)
+        target['wait_mode'] = mode if mode in ('poll', 'delay', 'none') else qms_client.DEFAULT_WAIT_MODE
+    if 'wait_seconds' in data:
+        target['wait_seconds'] = max(int(data.get('wait_seconds') or qms_client.DEFAULT_WAIT_SECONDS), 0)
+    if 'wait_timeout' in data:
+        target['wait_timeout'] = max(int(data.get('wait_timeout') or qms_client.DEFAULT_WAIT_TIMEOUT), 30)
+
+    qms_client.save_cfg(cfg)
+    return ok(qms_client.get_links({'links': [target]})[0])
 
 
 @app.route('/api/qms/link/delete', methods=['POST'])

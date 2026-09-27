@@ -971,7 +971,7 @@ function hisDetail(i){
    ============================================================ */
 VIEWS.qms = async function(){
   $('#main').innerHTML = `<div class="page-head"><div><h2>连接 QMediaSync</h2>
-      <div class="desc">转存/离线下载完成后，自动触发 QMS 刮削任务生成 strm 并整理分类</div></div>
+      <div class="desc">转存/离线下载完成后自动联动 QMS：可先「生成 strm」，等它落地后再「刮削」整理分类</div></div>
     <div class="btn-group"><button class="btn" onclick="qmsTriggerAll()">立即触发全部</button>
       <button class="btn" onclick="VIEWS.qms()">刷新</button></div></div>
     <div class="card"><div class="card-head">连接设置</div><div class="card-body" id="qms-cfg">加载中…</div></div>
@@ -1012,19 +1012,36 @@ VIEWS.qms = async function(){
         <button class="btn primary" onclick="qmsSave()">保存配置</button>
         <button class="btn" onclick="qmsTest()">测试连接</button>
         <button class="btn" onclick="qmsPathes()">查看刮削任务</button>
+        <button class="btn" onclick="qmsSyncPaths()">查看同步路径</button>
       </div>`;
+    window.__qmsWaitModes = r.data.wait_modes || [];
     renderQmsLinks(r.data.links || []);
   }catch(e){ $('#qms-cfg').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 };
+function qmsWaitLabel(l){
+  if (!l.sync_path_id) return '';
+  const mode = l.wait_mode || 'poll';
+  if (mode === 'poll') return `轮询等待（最长 ${l.wait_timeout || 900}s）`;
+  if (mode === 'delay') return `固定延迟 ${l.wait_seconds || 15}s`;
+  return '不等待，生成后立即刮削';
+}
 function renderQmsLinks(links){
-  $('#qms-links').innerHTML = links.length ? table(['绑定对象','QMS 刮削','刮削目录','状态','操作'], links.map(l => [
+  $('#qms-links').innerHTML = links.length ? table(['绑定对象','执行流程','刮削目录','状态','操作'], links.map(l => [
     l.scope === 'offline' ? '<span class="badge warn">离线下载完成后</span>'
                           : `<span class="badge blue">任务</span> ${esc(l.task_name || l.task_uid)}`,
-    `#${esc(l.qms_id)} ${l.qms_media_type?`<span class="badge">${esc(l.qms_media_type)}</span>`:''}`,
+    l.sync_path_id
+      ? `<span class="badge ok">① 生成 strm</span> <code>#${esc(l.sync_path_id)}</code>`
+        + `<div class="muted" style="font-size:11.5px;margin-top:3px">${esc(qmsWaitLabel(l))}</div>`
+        + `<div style="margin-top:4px"><span class="badge blue">② 刮削</span> <code>#${esc(l.qms_id)}</code>`
+        + (l.qms_media_type ? ` <span class="badge">${esc(l.qms_media_type)}</span>` : '') + '</div>'
+      : `<span class="badge blue">刮削</span> <code>#${esc(l.qms_id)}</code>`
+        + (l.qms_media_type ? ` <span class="badge">${esc(l.qms_media_type)}</span>` : '')
+        + '<div class="muted" style="font-size:11.5px;margin-top:3px">未配 strm 生成，直接刮削</div>',
     `<span class="trunc mono" title="${esc(l.qms_path)}">${esc(l.qms_path||'—')}</span>`,
     l.enabled ? '<span class="tw on"></span>启用' : '<span class="tw off"></span>停用',
     `<div class="btn-group">
       <button class="btn sm" onclick="qmsTrigger('${l.id}')">触发</button>
+      <button class="btn sm" onclick="qmsEditLink('${l.id}')">编辑</button>
       <button class="btn sm" onclick="qmsLogs('${l.id}','${esc(l.task_name||l.qms_id)}')">日志</button>
       <button class="btn sm" onclick="qmsToggle('${l.id}')">${l.enabled?'停用':'启用'}</button>
       <button class="btn sm danger" onclick="qmsLinkDel('${l.id}')">删除</button></div>`
@@ -1054,12 +1071,44 @@ async function qmsPathes(){
     ])) : '<div class="empty">QMS 里还没有刮削目录</div>';
   }catch(e){ $('.modal-body', w).innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }
+async function qmsLoadSyncPaths(){
+  try{ const r = await api('/api/qms/sync-paths',{method:'POST',body:qmsForm()}); return r.data || []; }
+  catch(e){ return null; }          // null = 拉取失败（老版 QMS 可能没有这个接口）
+}
+function qmsWaitFields(prefix, link){
+  const modes = window.__qmsWaitModes && window.__qmsWaitModes.length
+    ? window.__qmsWaitModes
+    : [{value:'poll',label:'轮询等待 strm 同步结束（推荐）'},{value:'delay',label:'固定延迟若干秒'},{value:'none',label:'不等待，立即刮削'}];
+  const mode = link.wait_mode || 'poll';
+  return `
+    <div class="row" style="margin-top:4px">
+      <div class="field"><label>等待方式</label><select id="${prefix}-wait">
+        ${modes.map(m=>`<option value="${esc(m.value)}" ${mode===m.value?'selected':''}>${esc(m.label)}</option>`).join('')}
+      </select></div>
+      <div class="field" style="max-width:170px"><label>固定延迟（秒）</label>
+        <input type="text" id="${prefix}-wsec" value="${esc(link.wait_seconds||15)}"></div>
+      <div class="field" style="max-width:170px"><label>最长等待（秒）</label>
+        <input type="text" id="${prefix}-wto" value="${esc(link.wait_timeout||900)}"></div>
+    </div>
+    <div class="hint">「轮询」会一直等到 QMS 的同步任务结束（is_running 归零）再刮削，比固定睡眠可靠；
+      超时则照常继续刮削，已生成的 strm 仍会被刮到。</div>`;
+}
+function qmsWaitPayload(prefix){
+  return {
+    wait_mode: $('#'+prefix+'-wait').value,
+    wait_seconds: Number($('#'+prefix+'-wsec').value || 15),
+    wait_timeout: Number($('#'+prefix+'-wto').value || 900),
+  };
+}
 async function qmsLinkAdd(){
   let pathes = [];
   try{ const r = await api('/api/qms/pathes',{method:'POST',body:qmsForm()}); pathes = r.data || []; }
   catch(e){ toast('先配置并测试 QMS 连接：' + e.message,'err'); return; }
   if (!pathes.length){ toast('QMS 里没有刮削目录','err'); return; }
+  const syncPaths = await qmsLoadSyncPaths();
   const tasks = (await api('/api/tasks')).data || [];
+  const syncOpts = (syncPaths || []).map(s =>
+    `<option value="${esc(s.id)}" data-name="${esc(s.name)}">#${esc(s.id)} ${esc(s.name)}</option>`).join('');
   const w = modal('创建连接', `
     <div class="field"><label>绑定对象</label><select id="ql-scope">
       <option value="task">某个转存任务（转存到新文件后触发）</option>
@@ -1067,26 +1116,99 @@ async function qmsLinkAdd(){
     <div class="field" id="ql-task-wrap"><label>选择转存任务</label><select id="ql-task">
       ${tasks.map(t=>`<option value="${esc(t.task_uid)}" data-name="${esc(t.name||t.url)}">${esc(t.name||t.url)} → ${esc(t.save_dir)}</option>`).join('') || '<option value="">（还没有转存任务）</option>'}
     </select></div>
-    <div class="field"><label>选择 QMS 刮削任务</label><select id="ql-qms">
+    <div class="field"><label>① 先生成 strm（可选）</label><select id="ql-sync">
+      <option value="">不生成，直接刮削</option>
+      ${syncOpts}
+    </select>
+    <div class="hint">${syncPaths === null
+      ? '（拉取同步路径失败，可先去 QMS 确认存在同步路径；也可以不选，走原来的直接刮削）'
+      : '选中后会先触发「同步路径」生成 strm —— 顺序不能反，没有 strm 就刮不到东西。'}</div>
+    </div>
+    <div id="ql-wait-wrap" class="hidden">${qmsWaitFields('ql', {})}</div>
+    <div class="field"><label>② 刮削任务</label><select id="ql-qms">
       ${pathes.map(p=>`<option value="${esc(p.id)}" data-path="${esc(p.source_path)}" data-media="${esc(p.media_type)}">#${esc(p.id)} ${esc(p.media_type)} · ${esc(p.source_path)}</option>`).join('')}
     </select></div>
     <div class="hint">提示：QMS 的「源目录」应当是 115 目录挂载到本机后的实际路径（例如通过 CloudDrive2 挂载）。</div>`,
     `<button class="btn" data-close>取消</button><button class="btn primary" id="ql-ok">创建</button>`);
   $('#ql-scope',w).addEventListener('change', e => { $('#ql-task-wrap',w).style.display = e.target.value === 'task' ? '' : 'none'; });
+  const syncSel = $('#ql-sync', w);
+  const toggleWait = () => $('#ql-wait-wrap', w).classList.toggle('hidden', !syncSel.value);
+  syncSel.addEventListener('change', toggleWait); toggleWait();
   w.addEventListener('click', async e => {
     if (e.target.id !== 'ql-ok') return;
     const scope = $('#ql-scope',w).value;
     const sel = $('#ql-qms',w).selectedOptions[0];
     const tsel = $('#ql-task',w).selectedOptions[0];
+    const ssel = syncSel.selectedOptions[0];
     try{
-      await api('/api/qms/link/add',{method:'POST',body:{
+      await api('/api/qms/link/add',{method:'POST',body:Object.assign({
         scope, qms_id: Number(sel.value), qms_path: sel.dataset.path, qms_media_type: sel.dataset.media,
         task_uid: scope==='task' ? (tsel?tsel.value:'') : '',
         task_name: scope==='task' ? (tsel?tsel.dataset.name:'') : '离线下载',
-      }});
+        sync_path_id: syncSel.value ? Number(syncSel.value) : null,
+        sync_path_name: (syncSel.value && ssel) ? ssel.dataset.name : '',
+      }, qmsWaitPayload('ql'))});
       toast('连接已创建','ok'); w.remove(); VIEWS.qms();
     }catch(err){ toast(err.message,'err'); }
   });
+}
+async function qmsEditLink(id){
+  let cfg = {};
+  try{ cfg = (await api('/api/qms/config')).data || {}; }catch(e){}
+  const link = (cfg.links || []).find(l => String(l.id) === String(id));
+  if (!link){ toast('连接不存在','err'); return; }
+  let pathes = [];
+  try{ pathes = (await api('/api/qms/pathes',{method:'POST',body:qmsForm()})).data || []; }catch(e){}
+  const syncPaths = await qmsLoadSyncPaths();
+  const syncOpts = (syncPaths || []).map(s =>
+    `<option value="${esc(s.id)}" data-name="${esc(s.name)}" ${String(s.id)===String(link.sync_path_id)?'selected':''}>#${esc(s.id)} ${esc(s.name)}</option>`).join('');
+  const qmsOpts = (pathes || []).map(p =>
+    `<option value="${esc(p.id)}" data-path="${esc(p.source_path)}" data-media="${esc(p.media_type)}" ${String(p.id)===String(link.qms_id)?'selected':''}>#${esc(p.id)} ${esc(p.media_type)} · ${esc(p.source_path)}</option>`).join('');
+  const w = modal('编辑连接', `
+    <div class="field"><label>绑定对象</label><input type="text" readonly style="background:var(--panel-2)"
+      value="${esc(link.scope==='offline' ? '离线下载完成后' : ('任务：' + (link.task_name||link.task_uid)))}"></div>
+    <div class="field"><label>① 先生成 strm（可选）</label><select id="qe-sync">
+      <option value="">不生成，直接刮削</option>${syncOpts}</select>
+      ${syncPaths === null ? '<div class="hint">拉取同步路径失败，下拉里可能缺项 —— 可先去 QMS 确认。</div>' : ''}
+    </div>
+    <div id="qe-wait-wrap" class="${link.sync_path_id?'':'hidden'}">${qmsWaitFields('qe', link)}</div>
+    <div class="field"><label>② 刮削任务</label><select id="qe-qms">
+      ${qmsOpts || `<option value="${esc(link.qms_id)}">#${esc(link.qms_id)}（当前值，拉取失败）</option>`}
+    </select></div>`,
+    `<button class="btn" data-close>取消</button><button class="btn primary" id="qe-ok">保存</button>`);
+  const ss = $('#qe-sync', w);
+  const tg = () => $('#qe-wait-wrap', w).classList.toggle('hidden', !ss.value);
+  ss.addEventListener('change', tg); tg();
+  w.addEventListener('click', async e => {
+    if (e.target.id !== 'qe-ok') return;
+    const qsel = $('#qe-qms', w).selectedOptions[0];
+    const ssel = ss.selectedOptions[0];
+    try{
+      await api('/api/qms/link/update',{method:'POST',body:Object.assign({
+        id, qms_id: Number(qsel.value),
+        qms_path: (qsel && qsel.dataset.path) || link.qms_path,
+        sync_path_id: ss.value ? Number(ss.value) : null,
+        sync_path_name: (ss.value && ssel) ? ssel.dataset.name : '',
+      }, qmsWaitPayload('qe'))});
+      toast('已保存','ok'); w.remove(); VIEWS.qms();
+    }catch(err){ toast(err.message,'err'); }
+  });
+}
+async function qmsSyncPaths(){
+  const w = modal('QMS 同步路径（生成 strm 的来源）','<div class="empty">加载中…</div>','','wide');
+  try{
+    const r = await api('/api/qms/sync-paths',{method:'POST',body:qmsForm()});
+    const items = r.data || [];
+    $('.modal-body', w).innerHTML = items.length ? table(['#','远程路径（115）','本地路径（strm）','账号','状态'], items.map(i=>[
+      esc(i.id),
+      `<span class="trunc mono" title="${esc(i.remote_path)}">${esc(i.remote_path||'—')}</span>`,
+      `<span class="trunc mono" title="${esc(i.local_path)}">${esc(i.local_path||'—')}</span>`,
+      esc(i.account_name||'—'),
+      i.is_running===2 ? '<span class="badge warn">正在运行</span>'
+        : i.is_running===1 ? '<span class="badge blue">队列中</span>'
+        : '<span class="badge">空闲</span>'
+    ])) : '<div class="empty">QMS 里还没有同步路径 —— 先去 QMS 的「同步」页面新建一个</div>';
+  }catch(e){ $('.modal-body', w).innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }
 async function qmsLinkDel(id){ if(!confirm('确认删除该连接？')) return;
   try{ await api('/api/qms/link/delete',{method:'POST',body:{id}}); VIEWS.qms(); }catch(e){ toast(e.message,'err'); } }
