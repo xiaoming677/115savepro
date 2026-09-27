@@ -32,7 +32,7 @@ LOG_DIR = os.path.join(BASE_DIR, 'log')
 SECRET_FILE = os.path.join(CONFIG_DIR, 'secret.key')
 
 # 版本号：更新镜像后可在页面左下角 / GET /api/version 核对
-APP_VERSION = '1.5.1'
+APP_VERSION = '1.6.0'
 
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'static'), static_url_path='/static')
 app.config['JSON_AS_ASCII'] = False
@@ -395,7 +395,11 @@ def api_task_add():
     except StorageError as e:
         return fail(str(e))
     scheduler.sync_jobs()
-    return ok(task)
+    # 保存即执行（用户要求：不用再手动点一次「执行」）
+    started = _maybe_auto_run(task, data)
+    resp = dict(task)
+    resp['auto_started'] = started
+    return ok(resp)
 
 
 @app.route('/api/task/update', methods=['POST'])
@@ -408,7 +412,10 @@ def api_task_update():
     except StorageError as e:
         return fail(str(e))
     scheduler.sync_jobs()
-    return ok(task)
+    started = _maybe_auto_run(task, data)
+    resp = dict(task)
+    resp['auto_started'] = started
+    return ok(resp)
 
 
 @app.route('/api/task/delete', methods=['POST'])
@@ -497,6 +504,33 @@ def _run_task_async(task, source='手动'):
         with _run_lock:
             RUN_STATE[task_uid].update({'status': 'failed', 'finished': True,
                                         'result': {'success': False, 'message': str(e)}})
+
+
+def _maybe_auto_run(task, req_data=None):
+    """保存任务后自动执行一次（可在「系统设置」里关掉）
+
+    为什么要做成可配置：批量建任务、或只想先改配置稍后再跑的时候，
+    每次保存都真跑一遍会白白消耗 115 的转存配额。
+
+    优先级：请求里的 auto_run > 配置 task.auto_run_on_save > 默认开启。
+    返回是否真的触发了执行。
+    """
+    req = req_data or {}
+    auto = req.get('auto_run')
+    if auto is None:
+        auto = (storage.config.get('task') or {}).get('auto_run_on_save', True)
+    if not auto:
+        return False
+    if not task or not task.get('task_uid'):
+        return False
+    if not task.get('enabled', True):
+        return False                      # 停用的任务不自动跑
+    with _run_lock:
+        if (RUN_STATE.get(task['task_uid']) or {}).get('status') == 'running':
+            return False                  # 已经在跑，别重复触发
+    threading.Thread(target=_run_task_async,
+                     args=(task, '保存后自动执行'), daemon=True).start()
+    return True
 
 
 @app.route('/api/task/execute', methods=['POST'])
@@ -743,7 +777,7 @@ def api_config():
 def api_config_update():
     data = request.get_json(silent=True) or {}
     for section in ('cron', 'notify', 'scheduler', 'quota_alert', 'regex',
-                    'file_operations', 'offline', 'update'):
+                    'file_operations', 'offline', 'update', 'task'):
         if section in data and isinstance(data[section], dict):
             storage.config.setdefault(section, {})
             if section == 'notify' and 'direct_fields' in data[section]:

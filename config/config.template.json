@@ -54,5 +54,8 @@
     "update": {
         "allow_self_update": true,
         "auto_check": true
+    },
+    "task": {
+        "auto_run_on_save": true
     }
 }

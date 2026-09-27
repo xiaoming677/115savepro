@@ -674,10 +674,20 @@ async function taskEditModal(uid){
         <button class="btn" onclick="sharePickModal()">选择</button>
         <button class="btn" onclick="tfSelection=[];$('#f-tf').value='未选择（转存全部）'">清空</button>
       </div></div>
-    <div class="field"><label class="chk"><input type="checkbox" id="f-en" ${(!t||t.enabled)?'checked':''}> 启用该任务</label></div>
+    <div class="row">
+      <div class="field"><label class="chk"><input type="checkbox" id="f-en" ${(!t||t.enabled)?'checked':''}> 启用该任务</label></div>
+      <div class="field"><label class="chk"><input type="checkbox" id="f-autorun" checked> 保存后立即执行一次</label>
+        <div class="hint">不用再去列表里点「执行」。执行成功后会自动触发 QMS 生成 strm 与刮削（需先在「连接 QMediaSync」里绑定）。</div></div>
+    </div>
   `, `<button class="btn" data-close>取消</button><button class="btn primary" id="f-ok">${t?'保存修改':'创建任务'}</button>`);
 
   $('#f-dedupe', w).value = t ? (t.dedupe_mode||'name') : 'name';
+  // 「保存后立即执行」默认值跟随全局配置（读不到就保持默认勾选）
+  api('/api/config').then(r => {
+    const v = ((r.data || {}).task || {}).auto_run_on_save;
+    const el = $('#f-autorun', w);
+    if (el && v !== undefined) el.checked = !!v;
+  }).catch(()=>{});
 
   w.addEventListener('click', async e => {
     if (e.target.id !== 'f-ok') return;
@@ -691,10 +701,15 @@ async function taskEditModal(uid){
       transfer_file_ids: tfSelection,
       enabled: $('#f-en',w).checked,
     };
+    const autoRun = $('#f-autorun', w).checked;
     try{
-      if (t) await api('/api/task/update', {method:'POST', body:{task_uid:t.task_uid, data:body}});
-      else await api('/api/task/add', {method:'POST', body});
-      toast(t?'已保存':'任务已创建','ok'); w.remove(); VIEWS.tasks();
+      const r = t
+        ? await api('/api/task/update', {method:'POST', body:{task_uid:t.task_uid, data:body, auto_run:autoRun}})
+        : await api('/api/task/add', {method:'POST', body:Object.assign({auto_run:autoRun}, body)});
+      const started = (r.data || {}).auto_started;
+      toast(t ? (started ? '已保存，并已开始执行' : '已保存')
+              : (started ? '任务已创建，并已开始执行' : '任务已创建'), 'ok');
+      w.remove(); VIEWS.tasks();
     }catch(err){ toast(err.message,'err'); }
   });
 }
@@ -1285,6 +1300,8 @@ VIEWS.settings = async function(){
         <div class="field"><label>全局 cron 表达式 <span class="muted">（每行一个，应用于「没有单独定时」的任务）</span></label>
           <textarea id="st-cron" style="min-height:80px">${esc((cron.default_schedule||[]).join('\n'))}</textarea>
           <div class="hint">示例：<code>0 10 * * *</code> 每天 10 点 ｜ <code>0 */6 * * *</code> 每 6 小时 ｜ <code>*/30 * * * *</code> 每 30 分钟</div></div>
+        <div class="field"><label class="chk"><input type="checkbox" id="st-autorun" ${(c.task||{}).auto_run_on_save!==false?'checked':''}> 新建 / 编辑任务保存后，立即执行一次</label>
+          <div class="hint">关掉后，保存任务只入库不执行，需要手动点「执行」。单个任务在对话框里也能临时取消。</div></div>
         <button class="btn primary" onclick="settingsSave()">保存</button></div></div>
       <div class="card"><div class="card-head">空间告警</div><div class="card-body">
         <div class="row">
@@ -1422,6 +1439,7 @@ async function settingsSave(){
       cron:{default_schedule:$('#st-cron').value.split('\n').map(s=>s.trim()).filter(Boolean)},
       quota_alert:{enabled:$('#st-qa-en').checked, threshold_percent:Number($('#st-qa-p').value||90), check_schedule:$('#st-qa-c').value.trim()},
       offline:{auto_trigger_qms:$('#st-of-en').checked, watch_schedule:$('#st-of-c').value.trim()},
+      task:{auto_run_on_save:$('#st-autorun').checked},
     }});
     toast('已保存并重载定时计划','ok');
   }catch(e){ toast(e.message,'err'); }
