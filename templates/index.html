@@ -793,7 +793,8 @@ async function pickDir(inputId){
     if (c){ stack = stack.slice(0, Number(c.dataset.i)+1); load(); return; }
 
     const row = e.target.closest('.pickrow');
-    if (row){ stack.push({cid:Number(row.dataset.cid), name: row.dataset.name}); load(); return; }
+    // cid 保持字符串：115 的 cid 是 19 位整数，Number() 会丢精度
+    if (row){ stack.push({cid: row.dataset.cid, name: row.dataset.name}); load(); return; }
 
     if (e.target.id === 'pd-refresh'){ load(); return; }
 
@@ -850,7 +851,7 @@ function sharePickModal(){
     const c = e.target.closest('.c');
     if (c){ stack = stack.slice(0, Number(c.dataset.i)+1); load(); return; }
     const en = e.target.closest('[data-enter]');
-    if (en){ stack.push({cid:Number(en.dataset.enter), name: en.dataset.name}); load(); return; }
+    if (en){ stack.push({cid: en.dataset.enter, name: en.dataset.name}); load(); return; }
     if (e.target.id === 'sp-ok'){ toast(tfSelection.length?('已选 '+tfSelection.length+' 项'):'将转存整条分享','ok'); w.remove(); return; }
   });
   w.addEventListener('change', e => {
@@ -946,7 +947,7 @@ async function loadFiles(){
                : `📄 ${esc(i.name)}`,
       i.is_dir ? '—' : fmtSize(i.size),
       `<span class="muted">${i.mtime ? fmtTime(new Date(i.mtime*1000).toISOString()) : '—'}</span>`,
-      `<div class="btn-group"><button class="btn sm" onclick="fileRename(${i.id},'${esc(i.name).replace(/'/g,"\\'")}')">重命名</button></div>`
+      `<div class="btn-group"><button class="btn sm" onclick="fileRename('${i.id}','${esc(i.name).replace(/'/g,"\\'")}')">重命名</button></div>`
     ])) : `<div class="empty">空目录
       <div style="margin-top:8px"><a onclick="dirDebugModal(${cur.cid})" style="cursor:pointer">看到的目录不全？点这里诊断</a></div></div>`;
   }catch(e){ $('#f-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
@@ -955,7 +956,8 @@ document.addEventListener('click', e => {
   const c = e.target.closest('#f-crumbs .c');
   if (c){ fileStack = fileStack.slice(0, Number(c.dataset.i)+1); fileSel = new Set(); loadFiles(); return; }
   const en = e.target.closest('[data-enter]');
-  if (en && $('#f-list')){ fileStack.push({cid:Number(en.dataset.enter), name:en.dataset.name}); fileSel = new Set(); loadFiles(); }
+  // cid 保持字符串，别用 Number() —— 115 的 cid 是 19 位整数，会丢精度
+  if (en && $('#f-list')){ fileStack.push({cid: en.dataset.enter, name:en.dataset.name}); fileSel = new Set(); loadFiles(); }
 });
 document.addEventListener('change', e => {
   const cb = e.target.closest('#f-list input[type=checkbox][data-fid]'); if (!cb) return;
@@ -974,7 +976,8 @@ function fileRename(fid, old){
     .then(()=>{ toast('已重命名','ok'); loadFiles(); }).catch(e=>toast(e.message,'err'));
 }
 function fileAct(kind){
-  const fids = Array.from(fileSel).map(Number);
+  // fids 保持字符串：fid 同样是 19 位整数，转 Number 会丢精度（甚至有操作错文件的风险）
+  const fids = Array.from(fileSel);
   if (!fids.length){ toast('请先勾选文件','err'); return; }
   if (kind === 'delete'){
     if (!confirm(`确认删除选中的 ${fids.length} 项？`)) return;
@@ -1004,7 +1007,7 @@ function fileAct(kind){
   }
   w.addEventListener('click', async e => {
     const c = e.target.closest('.c'); if (c){ stack = stack.slice(0,Number(c.dataset.i)+1); load(); return; }
-    const row = e.target.closest('.pickrow'); if (row){ stack.push({cid:Number(row.dataset.cid), name:row.dataset.name}); load(); return; }
+    const row = e.target.closest('.pickrow'); if (row){ stack.push({cid: row.dataset.cid, name:row.dataset.name}); load(); return; }
     if (e.target.id === 'mok'){
       const target_cid = stack[stack.length-1].cid;
       try{

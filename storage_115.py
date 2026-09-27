@@ -440,33 +440,41 @@ def _to_int(value, default=0):
 def _normalize_item(raw):
     """把 115 网页接口返回的条目统一成内部结构
 
-    判定优先级（**多重信号，不依赖单一字段**）：
+    ## 目录判定（按真实响应校准过）
 
-    1. 有 `sha` / `sha1` / `pc`（pickcode）→ **文件**
-       （目录没有内容哈希，也没有下载提取码 —— 这是最硬的信号）
-    2. 有有效 `fid` 且没有 `pid` → **文件**
-    3. 其余（没有 `fid`，或者带 `pid`）→ **目录**
+    115 目录条目的真实形态（实测）::
 
-    第 3 条把「带 `pid` 的」也算目录，是为了兼容目录条目同时带 `fid` 的接口形态；
-    只用 `fid` 判会漏判，而漏判的表现就是**目录从列表里整体消失**
-    （「进不去子目录 / 选不到目录」），极难从表面看出根因。
+        {"cid": "3378630208007515606", "pid": "0", "n": "04_影视",
+         "pc": "fbd53em77w07qrw31h", "fc": 0, ...}   ← 没有 fid、没有 sha
 
-    ⚠️ 不要用 p115client 的 `normalize_attr_simple` 判目录。它优先看 `fc` 字段
-    （`is_dir = int(info['fc']) == 0`），而 `fc` 在不同接口里语义并不一致：
-    只要它不是 0，目录就会被判成文件，紧接着取 `info['fid']` 抛 KeyError，
-    被容错分支吞掉后统一变成 `is_dir=False`。
+    规则：
+    1. 有非空 `sha` / `sha1` → **文件**（目录没有内容哈希）
+    2. 有 `fid` 且没有 `pid` → **文件**（目录没有 fid）
+    3. 其余 → **目录**
 
-    参照：p115client 自己在 `overview_attr()` 处理同形态（带 `n` 字段）的数据时
-    用的是 `"fid" not in info`；本函数在它之上又补了第 1、2 条更强的信号。
+    ⚠️ **绝对不要拿 `pc`（pickcode）判断**：**目录也有 `pc`**！
+    用 `pc` 当文件特征会把所有目录判成文件（v1.7.2 就这么错过一次）。
+    同理也不要依赖 `fc`（语义不一致，见下）。
+
+    ⚠️ 不要用 p115client 的 `normalize_attr_simple`：它优先看 `fc`
+    （`is_dir = int(info['fc']) == 0`），而 `fc` 在不同接口里语义不一致，
+    非空目录会抛 `KeyError('fid')`、`fc=0` 的文件会抛 `KeyError('pid')`。
+
+    ## id 为什么是字符串
+
+    **115 的 `cid` / `fid` 是 19 位整数**（如 `3378630208007515606`），
+    超出 JS 的 `Number.MAX_SAFE_INTEGER`（`9007199254740991`，16 位）。
+    如果按 JSON 数字返回，浏览器 `JSON.parse` 会**静默丢精度**
+    （实测差 42），点进去请求的就是另一个目录 —— 表现正是「进不去子目录」。
+    所以对外一律用**字符串**承载 id；后端内部要用整数时显式 `_to_int()`。
     """
     if not isinstance(raw, dict):
         return None
     fid = raw.get('fid')
-    has_fid = fid not in (None, '', 0, '0')
-    has_file_mark = bool(raw.get('sha') or raw.get('sha1') or raw.get('pc'))
-    if has_file_mark:
+    sha = raw.get('sha') or raw.get('sha1') or ''
+    if sha:
         is_dir = False
-    elif has_fid and 'pid' not in raw:
+    elif fid and 'pid' not in raw:
         is_dir = False
     else:
         is_dir = True
@@ -479,11 +487,12 @@ def _normalize_item(raw):
     name = raw.get('n') or raw.get('fn') or raw.get('file_name') or ''
     return {
         'is_dir': is_dir,
-        'id': item_id,
-        'parent_id': parent_id,
+        # id / parent_id 一律字符串，避免前端精度丢失（见上）
+        'id': str(item_id),
+        'parent_id': str(parent_id),
         'name': str(name),
         'size': _to_int(raw.get('s') or raw.get('fs')),
-        'sha1': str(raw.get('sha') or raw.get('sha1') or '').upper(),
+        'sha1': str(sha).upper(),
         'pickcode': str(raw.get('pc') or ''),
         'ctime': _to_int(raw.get('tp')),
         'mtime': _to_int(raw.get('te')),
@@ -743,16 +752,19 @@ class Storage115:
     def dir_chain(self, path, client=None):
         """把 '/我的影视/剧集' 解析成可导航的层级链
 
-        返回 [{'cid': 0, 'name': '根目录'}, {'cid': 111, 'name': '我的影视'}, ...]
+        返回 [{'cid': '0', 'name': '根目录'}, {'cid': '3378…', 'name': '我的影视'}, ...]
+
+        cid 用**字符串**：115 的 cid 是 19 位整数，超过 JS 安全整数范围，
+        按数字返回给浏览器会丢精度（详见 _normalize_item 的说明）。
 
         用于路径选择器「打开时直接定位到输入框里已填的路径」。
-        每一级前缀解析一次（`fs_dir_getid` 支持整段路径，所以只有一个前缀时也只调用一次）；
+        每一级前缀解析一次（`fs_dir_getid` 支持整段路径）；
         路径深度通常不超过 5 级，而且只在打开选择器时跑一遍，开销可以接受。
         某一级不存在（路径还没创建 / 写错了）就停在那里，前面的层级仍然可用。
         """
         client = client or self.current_client()
         parts = [p for p in self.normalize_path(path).split('/') if p]
-        chain = [{'cid': 0, 'name': '根目录'}]
+        chain = [{'cid': '0', 'name': '根目录'}]
         prefix = ''
         for name in parts:
             prefix = prefix + '/' + name
@@ -762,7 +774,7 @@ class Storage115:
                 break
             if not cid:
                 break
-            chain.append({'cid': cid, 'name': name})
+            chain.append({'cid': str(cid), 'name': name})
         return chain
 
     def _list_dir_once(self, cid, offset, limit, client, only_dir, capture=None):
@@ -1270,7 +1282,8 @@ class Storage115:
 
         # 6) 接收
         emit('开始转存 %d 项到 %s' % (len(to_receive), task['save_dir']))
-        ids = [it['id'] for it in to_receive]
+        # 这里的 id 是字符串（见 _normalize_item），传给 115 前显式转成精确整数
+        ids = [_to_int(it['id']) for it in to_receive]
         try:
             fs.receive(ids, to_pid=target_cid)
         except Exception as e:  # noqa: BLE001

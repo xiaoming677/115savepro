@@ -33,7 +33,7 @@ LOG_DIR = os.path.join(BASE_DIR, 'log')
 SECRET_FILE = os.path.join(CONFIG_DIR, 'secret.key')
 
 # 版本号：更新镜像后可在页面左下角 / GET /api/version 核对
-APP_VERSION = '1.7.2'
+APP_VERSION = '1.7.3'
 
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'static'), static_url_path='/static')
 app.config['JSON_AS_ASCII'] = False
@@ -621,14 +621,14 @@ def api_dir_debug():
         return fail(str(e))
 
     capture = []
-    out = {'cid': cid, 'step': '调用 115 的 /files 接口两次'}
+    out = {'cid': str(cid), 'step': '调用 115 的 /files 接口两次'}
     try:
         client = storage.current_client()
     except StorageError as e:
         return fail(str(e))
     res = {
         '账号': '',
-        'cid': cid,
+        'cid': str(cid),
         '请求记录': capture,
         '归一化结果': None,
         '提示': ('把这一整段 JSON 发给开发者即可定位。'
@@ -673,7 +673,9 @@ def api_dir_list():
             except (TypeError, ValueError):
                 return fail('目录 id 不合法：%s' % cid_arg)
         data = storage.path_tree(cid, with_raw=want_raw)
-        data['cid'] = cid
+        # cid 用字符串返回：115 的 cid 是 19 位整数，超出 JS 安全整数范围，
+        # 按数字发给浏览器会丢精度（详见 storage_115._normalize_item）
+        data['cid'] = str(cid)
         return ok(data)
     except StorageError as e:
         return fail(str(e))
@@ -718,7 +720,8 @@ def api_dir_create():
                     break
         except StorageError:
             pass
-        return ok({'cid': new_cid, 'name': name})
+        # cid 用字符串（19 位整数，JS 会丢精度）
+        return ok({'cid': str(new_cid) if new_cid else '', 'name': name})
     except StorageError as e:
         return fail(str(e))
 
@@ -731,7 +734,8 @@ def api_dir_resolve():
         cid = storage.ensure_dir(data.get('path') or '/')
     except StorageError as e:
         return fail(str(e))
-    return ok({'path': storage.normalize_path(data.get('path') or '/'), 'cid': cid})
+    return ok({'path': storage.normalize_path(data.get('path') or '/'),
+                   'cid': str(cid)})
 
 
 # --------------------------------------------------------------------------
