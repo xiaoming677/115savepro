@@ -94,32 +94,98 @@ def _docker(method, path, body=None, timeout=120):
         return resp.status, raw.decode('utf-8', 'replace')
 
 
+def find_docker_sockets():
+    """在常见目录里找 docker.sock —— 用来判断是不是挂载路径写歪了"""
+    found = []
+    for d in ('/var/run', '/run', '/var/run/docker', '/run/docker', '/var/run/user'):
+        try:
+            for name in os.listdir(d):
+                if 'docker' in name.lower() and 'sock' in name.lower():
+                    p = os.path.join(d, name)
+                    if p not in found and os.path.exists(p):
+                        found.append(p)
+        except Exception:  # noqa: BLE001
+            continue
+    return found
+
+
 def socket_available():
-    """检测 docker.sock 是否真的可读写（挂载了且权限正确）"""
+    """检测 docker.sock 是否真的可用，并给出**能照着修**的原因
+
+    三类失败要分开说清楚，否则用户不知道往哪修：
+      1. 容器内压根没这个文件 → 挂载没生效（多半是没重建容器）或路径写歪了
+      2. 有文件但没权限       → 容器用户不在 docker 组（本镜像默认 root，通常是加了 user:）
+      3. 有权限但连不上       → socket 在、daemon 异常
+    """
     if not os.path.exists(DOCKER_SOCKET):
-        return False, '未挂载 %s' % DOCKER_SOCKET
+        socks = find_docker_sockets()
+        if socks:
+            return False, ('容器内 %s 不存在，但发现了 %s —— 挂载路径可能写歪了。'
+                           'compose 里冒号左边必须是**宿主机**上 docker.sock 的完整路径。'
+                           % (DOCKER_SOCKET, '、'.join(socks)))
+        return False, ('容器内看不到 %s：挂载没有生效。'
+                       '改完 docker-compose.yml 后**必须重建容器**才生效 —— '
+                       '飞牛界面在 Compose 项目右侧点「三个点 → 重构」；'
+                       'SSH 则执行 docker compose up -d --force-recreate。'
+                       '（只点「启动」不会重新挂载）' % DOCKER_SOCKET)
+
+    if not os.access(DOCKER_SOCKET, os.R_OK | os.W_OK):
+        try:
+            st = os.stat(DOCKER_SOCKET)
+            owner = 'uid=%s gid=%s' % (st.st_uid, st.st_gid)
+        except Exception:  # noqa: BLE001
+            owner = '未知'
+        me = ''
+        try:
+            me = '容器内 uid=%s gid=%s，' % (os.getuid(), os.getgid())
+        except Exception:  # noqa: BLE001
+            pass
+        return False, ('能看到 %s 但没有读写权限（%ssocket 属主 %s）。'
+                       '本镜像默认以 root 运行；如果你在 compose 里写了 user:，'
+                       '要么去掉它，要么加 group_add 把该用户并入 docker 组。'
+                       % (DOCKER_SOCKET, me, owner))
+
     try:
         st, obj = _docker('GET', '/version', timeout=10)
         if st == 200 and isinstance(obj, dict):
             return True, obj.get('Version') or 'ok'
-        return False, '访问 Docker 失败：HTTP %s' % st
+        return False, '能连上 Docker 但返回 HTTP %s：%s' % (st, str(obj)[:120])
     except PermissionError:
-        return False, '没有权限访问 %s（容器内非 root 或 socket 属主不符）' % DOCKER_SOCKET
+        return False, 'Docker 拒绝了访问（socket 权限不足），把容器用户加入 docker 组后再试'
     except Exception as e:  # noqa: BLE001
-        return False, '%s: %s' % (type(e).__name__, str(e)[:120])
+        return False, '连接 Docker 失败：%s: %s' % (type(e).__name__, str(e)[:120])
 
 
 def _self_container_id():
-    """拿到自身容器 ID。Docker 默认把容器短 ID 写进 HOSTNAME"""
+    """拿到自身容器 ID
+
+    Docker 默认把容器**短 ID** 写进 HOSTNAME；若 compose 里自定义了 hostname，
+    就退化到从 /proc/self/cgroup 里解析（cgroup v1 的 docker-<id>.scope / v2 的
+    64 位十六进制段）。
+    """
     for key in ('SELF_CONTAINER_ID', 'HOSTNAME'):
         v = (os.environ.get(key) or '').strip()
         if v:
             return v
     try:
         with open('/etc/hostname', encoding='utf-8') as f:
-            return f.read().strip()
+            v = f.read().strip()
+            if v:
+                return v
     except Exception:  # noqa: BLE001
-        return ''
+        pass
+    try:
+        with open('/proc/self/cgroup', encoding='utf-8') as f:
+            for line in f:
+                for part in line.strip().split('/'):
+                    part = part.strip()
+                    if len(part) == 64 and all(c in '0123456789abcdef' for c in part):
+                        return part
+                    if part.startswith('docker-') and part.endswith('.scope'):
+                        return part[len('docker-'):-len('.scope')]
+    except Exception:  # noqa: BLE001
+        pass
+    return ''
 
 
 def self_info():

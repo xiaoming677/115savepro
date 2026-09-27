@@ -32,7 +32,7 @@ LOG_DIR = os.path.join(BASE_DIR, 'log')
 SECRET_FILE = os.path.join(CONFIG_DIR, 'secret.key')
 
 # 版本号：更新镜像后可在页面左下角 / GET /api/version 核对
-APP_VERSION = '1.5.0'
+APP_VERSION = '1.5.1'
 
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'static'), static_url_path='/static')
 app.config['JSON_AS_ASCII'] = False
@@ -1007,6 +1007,10 @@ def api_update_env():
         'container': info,
         'assistant_image': updater.ASSISTANT_IMAGE,
         'socket': updater.DOCKER_SOCKET,
+        # 给前端做诊断用：容器内到底有没有这个 socket、有没有挂在别处
+        'socket_exists': os.path.exists(updater.DOCKER_SOCKET),
+        'socket_found': updater.find_docker_sockets(),
+        'running_as_root': (os.getuid() == 0) if hasattr(os, 'getuid') else None,
         'enabled': _self_update_enabled(),
     })
 
