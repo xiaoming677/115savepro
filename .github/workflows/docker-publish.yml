@@ -109,6 +109,21 @@ jobs:
         id: bt
         run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
+      # 镜像的 version 标签取自代码里的 APP_VERSION，而不是 git ref。
+      # 原因：main 分支和 v* tag 都会推 latest，如果按 git ref 取，
+      # 分支构建会把 latest 的 version 标成 "main"，
+      # 用户 docker inspect 出来的版本号就对不上了。
+      - name: 读取程序版本
+        id: appver
+        run: |
+          v=$(sed -n "s/^APP_VERSION = '\([^']*\)'.*/\1/p" web_app.py | head -1)
+          if [ -z "$v" ]; then
+            echo "::warning title=未能读取 APP_VERSION::web_app.py 里没找到 APP_VERSION，镜像版本标签将留空"
+            v="unknown"
+          fi
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+          echo "程序版本：$v"
+
       - name: 构建并推送
         uses: docker/build-push-action@v6
         with:
@@ -117,7 +132,15 @@ jobs:
           platforms: linux/amd64
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          # 显式列出 OCI 标签，version 用代码里的 APP_VERSION（见上一步）
+          labels: |
+            org.opencontainers.image.title=115SavePro
+            org.opencontainers.image.description=115 网盘自动转存 / 离线下载 / QMediaSync 联动
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.licenses=AGPL-3.0
+            org.opencontainers.image.version=${{ steps.appver.outputs.v }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.bt.outputs.date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
