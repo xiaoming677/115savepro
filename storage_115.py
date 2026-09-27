@@ -440,23 +440,36 @@ def _to_int(value, default=0):
 def _normalize_item(raw):
     """把 115 网页接口返回的条目统一成内部结构
 
-    **目录判定只认「有没有 fid」**（115 网页接口的稳定规则）：
-      - 文件项：有 `fid`（自身文件 id），`cid` 是它所在目录
-      - 目录项：有 `cid`（自身目录 id）与 `pid`（父目录 id），**没有 `fid`**
+    判定优先级（**多重信号，不依赖单一字段**）：
+
+    1. 有 `sha` / `sha1` / `pc`（pickcode）→ **文件**
+       （目录没有内容哈希，也没有下载提取码 —— 这是最硬的信号）
+    2. 有有效 `fid` 且没有 `pid` → **文件**
+    3. 其余（没有 `fid`，或者带 `pid`）→ **目录**
+
+    第 3 条把「带 `pid` 的」也算目录，是为了兼容目录条目同时带 `fid` 的接口形态；
+    只用 `fid` 判会漏判，而漏判的表现就是**目录从列表里整体消失**
+    （「进不去子目录 / 选不到目录」），极难从表面看出根因。
 
     ⚠️ 不要用 p115client 的 `normalize_attr_simple` 判目录。它优先看 `fc` 字段
     （`is_dir = int(info['fc']) == 0`），而 `fc` 在不同接口里语义并不一致：
     只要它不是 0，目录就会被判成文件，紧接着取 `info['fid']` 抛 KeyError，
-    被容错分支吞掉后统一变成 `is_dir=False` —— **目录从列表里整体消失**，
-    表现就是「进不去子目录 / 选不到目录」。
+    被容错分支吞掉后统一变成 `is_dir=False`。
 
-    p115client 自己在 `overview_attr()` 处理同一形态（带 `n` 字段）的数据时，
-    用的也是 `"fid" not in info` 这条规则，本函数与它保持一致。
+    参照：p115client 自己在 `overview_attr()` 处理同形态（带 `n` 字段）的数据时
+    用的是 `"fid" not in info`；本函数在它之上又补了第 1、2 条更强的信号。
     """
     if not isinstance(raw, dict):
         return None
     fid = raw.get('fid')
-    is_dir = fid in (None, '', 0, '0')          # 没有有效 fid → 目录
+    has_fid = fid not in (None, '', 0, '0')
+    has_file_mark = bool(raw.get('sha') or raw.get('sha1') or raw.get('pc'))
+    if has_file_mark:
+        is_dir = False
+    elif has_fid and 'pid' not in raw:
+        is_dir = False
+    else:
+        is_dir = True
     if is_dir:
         item_id = _to_int(raw.get('cid'))
         parent_id = _to_int(raw.get('pid'))
@@ -752,16 +765,17 @@ class Storage115:
             chain.append({'cid': cid, 'name': name})
         return chain
 
-    def list_dir(self, cid=0, offset=0, limit=100, client=None, only_dir=False):
-        """罗列目录内容，返回 {'cid', 'total', 'items': [...]}
+    def _list_dir_once(self, cid, offset, limit, client, only_dir, capture=None):
+        """真正发一次 fs_files 请求
 
-        only_dir=True（路径选择器用）走官方参数 `nf=1`「不要显示文件」。
-
+        only_dir=True 时带上官方参数 `nf=1`「不要显示文件」。
         ⚠️ 不要改用 `type=0` 来「只取目录」：那是「文件类型=全部」，
-        仍然属于按类型筛选，而按类型筛选时目录需要额外 `stdir=1` 才会带出来，
-        否则会变成「一个目录都看不到」。`nf` 才是「仅显示目录」的专用参数。
+        仍属于按类型筛选，而按类型筛选时目录需要额外 `stdir=1` 才会带出来，
+        很容易变成「一个目录都看不到」。
+
+        capture 传入 list 时，把这次请求的 payload 与**原始响应**塞进去，
+        供 /api/dir/debug 排查用（不传则不做任何额外工作）。
         """
-        client = client or self.current_client()
         size = _to_int(limit, 100)
         if size <= 0:
             size = 100
@@ -777,8 +791,22 @@ class Storage115:
         if only_dir:
             payload['nf'] = 1
         resp = client.fs_files(payload)
+        if capture is not None:
+            raw_items = resp.get('data') if isinstance(resp, dict) else None
+            capture.append({
+                'payload': dict(payload),
+                'state': resp.get('state') if isinstance(resp, dict) else None,
+                'errno': resp.get('errno') if isinstance(resp, dict) else None,
+                'count': resp.get('count') if isinstance(resp, dict) else None,
+                'message': resp.get('message') if isinstance(resp, dict) else None,
+                'data_is_list': isinstance(raw_items, list),
+                'data_len': len(raw_items) if isinstance(raw_items, list) else 0,
+                # 只留前 3 条原文，够看清字段形态，又不至于把响应塞爆
+                'raw_sample': [dict(x) for x in (raw_items or [])[:3] if isinstance(x, dict)],
+            })
+
         # fs_files 在「空目录」等情况下 state 可能为 0。
-        # 这里区分对待：有错误信息 → 报友好错误；只是空 → 返回空列表，
+        # 区分对待：有错误信息 → 报友好错误；只是空 → 返回空列表，
         # 否则进一个空目录会直接弹错。
         if isinstance(resp, dict) and resp.get('state') in (0, False):
             if not resp.get('data'):
@@ -802,6 +830,32 @@ class Storage115:
                 'total': _to_int(resp.get('count'), len(items)),
                 'items': items}
 
+    def list_dir(self, cid=0, offset=0, limit=100, client=None, only_dir=False,
+                 capture=None):
+        """罗列目录内容，返回 {'cid', 'total', 'items': [...], 'fallback'?: bool}
+
+        only_dir=True（路径选择器 / 只看目录）时：
+
+        1. 先带 `nf=1` 让 115 只返回目录（省流量）
+        2. **如果返回空，去掉 `nf` 再来一次，然后本地按 `is_dir` 过滤**
+
+        第 2 步是必要的兜底：`nf` 只是优化手段，万一 115 对这个参数返回空
+        （不认 / 被忽略 / 语义有变），就会表现为「目录是空的、进不去子目录」
+        这种极难排查的静默失败。兜底之后「只看目录」不依赖任何服务端参数，
+        只依赖我们自己的 `is_dir` 判定。
+        """
+        client = client or self.current_client()
+        page = self._list_dir_once(cid, offset, limit, client, only_dir, capture=capture)
+        if not only_dir or page['items']:
+            return page
+        page2 = self._list_dir_once(cid, offset, limit, client, False, capture=capture)
+        dirs = [it for it in page2['items'] if it.get('is_dir')]
+        if dirs:
+            logger.debug('nf=1 返回空但实际有 %d 个目录，已走本地过滤兜底 (cid=%s)'
+                         % (len(dirs), cid))
+            return {'cid': page2['cid'], 'total': len(dirs), 'items': dirs, 'fallback': True}
+        return page
+
     def list_children_index(self, cid, client=None, max_items=20000):
         """把目录下所有直接子项建成索引：{小写名: item} 与 {sha1: item}，用于去重"""
         client = client or self.current_client()
@@ -824,17 +878,20 @@ class Storage115:
             offset += limit
         return by_name, by_sha1
 
-    def path_tree(self, cid=0, client=None, with_raw=False):
+    def path_tree(self, cid=0, client=None, with_raw=False, capture=None):
         """路径选择器用：返回某层的子目录列表
 
-        返回 {'items': [{'id','name','has_child'?}], 'total': N, 'need_login': bool}
-        with_raw=True 时附带 115 的原始条目，便于排查「看不到目录」这类问题。
+        返回 {'items': [{'id','name'}], 'total': N, 'need_login': bool}
+        with_raw=True 时附带归一化后的条目；capture 见 list_dir。
         """
-        page = self.list_dir(cid, limit=MAX_PAGE, client=client, only_dir=True)
+        page = self.list_dir(cid, limit=MAX_PAGE, client=client, only_dir=True,
+                             capture=capture)
         items = [{'id': i['id'], 'name': i['name']} for i in page['items'] if i.get('is_dir')]
         # 按名字排序，让选择器里的顺序稳定好找
         items.sort(key=lambda x: (x.get('name') or '').lower())
         out = {'items': items, 'total': page.get('total') or len(items)}
+        if page.get('fallback'):
+            out['fallback'] = True
         if with_raw:
             out['raw'] = page['items']
         return out

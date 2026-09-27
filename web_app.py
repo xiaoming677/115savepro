@@ -33,7 +33,7 @@ LOG_DIR = os.path.join(BASE_DIR, 'log')
 SECRET_FILE = os.path.join(CONFIG_DIR, 'secret.key')
 
 # 版本号：更新镜像后可在页面左下角 / GET /api/version 核对
-APP_VERSION = '1.7.1'
+APP_VERSION = '1.7.2'
 
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'static'), static_url_path='/static')
 app.config['JSON_AS_ASCII'] = False
@@ -596,6 +596,55 @@ def api_share_browse():
 # --------------------------------------------------------------------------
 # 目录选择器
 # --------------------------------------------------------------------------
+@app.route('/api/dir/debug', methods=['GET'])
+@login_required
+def api_dir_debug():
+    """目录诊断：把 115 返回的原始数据原样拿出来
+
+    用于排查「看不到目录 / 进不去子目录」这类问题 —— 这类问题往往出在
+    115 返回的字段形态上，光看归一化后的结果猜不出来。
+
+    参数 cid 同 /api/dir/list；会分别用「带 nf=1（只要目录）」和
+    「不带 nf（目录+文件）」各请求一次，方便对照。
+    """
+    cid_arg = request.args.get('cid') or 0
+    try:
+        if str(cid_arg) in ('root', '', '0'):
+            cid = 0
+        elif str(cid_arg).startswith('/'):
+            cid = storage.dir_id(cid_arg)
+        else:
+            cid = int(cid_arg)
+    except (TypeError, ValueError):
+        return fail('目录 id 不合法：%s' % cid_arg)
+    except StorageError as e:
+        return fail(str(e))
+
+    capture = []
+    out = {'cid': cid, 'step': '调用 115 的 /files 接口两次'}
+    try:
+        client = storage.current_client()
+    except StorageError as e:
+        return fail(str(e))
+    res = {
+        '账号': '',
+        'cid': cid,
+        '请求记录': capture,
+        '归一化结果': None,
+        '提示': ('把这一整段 JSON 发给开发者即可定位。'
+                 'raw_sample 是 115 原样返回的前 3 条数据，'
+                 '重点看目录条目里到底有没有 fid / pid / fc 这些字段。'),
+    }
+    try:
+        tree = storage.path_tree(cid, client=client, with_raw=True, capture=capture)
+        res['归一化结果'] = tree
+    except StorageError as e:
+        res['归一化结果'] = {'error': str(e)}
+    res['账号'] = storage.config['p115'].get('current_user') or ''
+    res['版本'] = APP_VERSION
+    return ok(res)
+
+
 @app.route('/api/dir/list', methods=['GET'])
 @login_required
 def api_dir_list():

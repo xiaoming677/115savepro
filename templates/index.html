@@ -714,6 +714,28 @@ async function taskEditModal(uid){
   });
 }
 
+/* --------- 目录诊断：把 115 的原始响应拿出来 --------- */
+async function dirDebugModal(cid){
+  const w = modal('目录诊断（115 原始响应）', '<div class="empty">读取中…</div>',
+    `<button class="btn" data-close>关闭</button>
+     <button class="btn primary" id="dbg-copy">复制全部</button>`, 'wide');
+  let text = '';
+  try{
+    const r = await api('/api/dir/debug?cid=' + encodeURIComponent(cid));
+    text = JSON.stringify(r.data, null, 2);
+  }catch(e){ text = '读取失败：' + e.message; }
+  $('.modal-body', w).innerHTML =
+    `<div class="hint">下面是 115 <b>原样返回</b>的数据。如果目录列表不对，把这份内容复制发给开发者即可定位
+      （重点看 <code>raw_sample</code> 里目录条目到底有哪些字段）。</div>
+     <pre class="logbox" style="max-height:420px;overflow:auto;font-size:12px;white-space:pre-wrap;margin-top:10px">${esc(text)}</pre>`;
+  w.addEventListener('click', e => {
+    if (e.target.id !== 'dbg-copy') return;
+    if (navigator.clipboard) navigator.clipboard.writeText(text)
+      .then(()=>toast('已复制到剪贴板','ok')).catch(()=>toast('复制失败，请手动选择文本','err'));
+    else toast('浏览器不支持自动复制，请手动选择文本','err');
+  });
+}
+
 /* --------- 目录选择器 --------- */
 async function pickDir(inputId){
   const el = document.getElementById(inputId);
@@ -742,7 +764,8 @@ async function pickDir(inputId){
       const items = (r.data && r.data.items) || [];
       $('#plist',w).innerHTML = items.length ? items.map(i =>
         `<div class="pickrow" data-cid="${i.id}" data-name="${esc(i.name)}"><span>📁</span><span class="nm">${esc(i.name)}</span><span class="muted">进入 ›</span></div>`
-      ).join('') : '<div class="empty">该目录下没有子目录</div>';
+      ).join('') : `<div class="empty">该目录下没有子目录
+        <div style="margin-top:8px"><a onclick="dirDebugModal(${curCid()})" style="cursor:pointer">看不到想要的目录？点这里诊断</a></div></div>`;
       $('#pd-hint',w).innerHTML = `当前：<code>${esc(curPath())}</code>　`
         + (items.length ? `共 ${items.length} 个子目录 —— 点一行进入下一层，或直接「选择当前目录」`
                         : '可以直接「选择当前目录」，或先用「新建目录」建一个');
@@ -924,7 +947,8 @@ async function loadFiles(){
       i.is_dir ? '—' : fmtSize(i.size),
       `<span class="muted">${i.mtime ? fmtTime(new Date(i.mtime*1000).toISOString()) : '—'}</span>`,
       `<div class="btn-group"><button class="btn sm" onclick="fileRename(${i.id},'${esc(i.name).replace(/'/g,"\\'")}')">重命名</button></div>`
-    ])) : '<div class="empty">空目录</div>';
+    ])) : `<div class="empty">空目录
+      <div style="margin-top:8px"><a onclick="dirDebugModal(${cur.cid})" style="cursor:pointer">看到的目录不全？点这里诊断</a></div></div>`;
   }catch(e){ $('#f-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }
 document.addEventListener('click', e => {
